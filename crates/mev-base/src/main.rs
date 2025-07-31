@@ -9,11 +9,11 @@ use reth_provider::ReceiptProvider;
 use futures::TryStreamExt;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_node_api::FullNodeComponents;
-use alloy_rpc_types_eth::TransactionRequest;
+use alloy_rpc_types_eth::{TransactionRequest, BlockId};
 use alloy_primitives::{Address, U256, TxKind};
 use std::str::FromStr;
-use reth_rpc_eth_api::helpers::EthCall;
-use futures::future::join_all;
+
+mod simulation;
 
 /// Block subscriber ExEx that echoes block numbers
 async fn block_subscriber_exex<Node: FullNodeComponents>(
@@ -98,72 +98,30 @@ fn main() -> eyre::Result<()> {
             loop {
                 interval.tick().await;
                 
-                println!("\n🔬 Starting batch simulation of 512 transactions...");
-                let batch_start = std::time::Instant::now();
-                
                 let from_addr = Address::from_str("0xd0ffEe48945a9518b0B543a2C59dFb102221fBb7").unwrap();
                 let to_addr = Address::from_str("0x38cef6277942faf66b9cd9f1b5132d68ba175b32").unwrap();
                 
-                // Create futures for all 512 transactions
-                let mut futures = Vec::with_capacity(512);
+                // Create the transaction request
+                let tx_request = TransactionRequest {
+                    from: Some(from_addr),
+                    to: Some(TxKind::Call(to_addr)),
+                    value: Some(U256::from(0)),
+                    gas: Some(1_000_000_000), // 1 billion gas
+                    input: hex::decode("73eab4900000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000012c00000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000001dc8cff000000000000000000000000000000000000000000000000000000000000001e000000000000000000000000000000000000000000000000000000000000753000000000000000000000000038cef6277942faf66b9cd9f1b5132d68ba175b3200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000").unwrap().into(),
+                    ..Default::default()
+                };
                 
-                for _ in 0..512 {
-                    let tx_request = TransactionRequest {
-                        from: Some(from_addr),
-                        to: Some(TxKind::Call(to_addr)),
-                        value: Some(U256::from(0)),
-                        // msg.input = "0x73eab4900000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000012c00000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000001dc8cff000000000000000000000000000000000000000000000000000000000000001e000000000000000000000000000000000000000000000000000000000000753000000000000000000000000038cef6277942faf66b9cd9f1b5132d68ba175b3200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000"
-                        input: Some("0x73eab4900000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000012c00000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000001dc8cff000000000000000000000000000000000000000000000000000000000000001e000000000000000000000000000000000000000000000000000000000000753000000000000000000000000038cef6277942faf66b9cd9f1b5132d68ba175b3200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000".into()),
-                        // input: vec![0x00, 0x00, 0x00, 0x01].into(),
-                        ..Default::default()
-                    };
-                    
-                    // Create future for simulation
-                    let eth_api_clone = eth_api.clone();
-                    let future = tokio::task::spawn(async move {
-                        eth_api_clone.call(tx_request.into(), None, Default::default()).await
-                    });
-                    futures.push(future);
+                // Call the simulation function
+                if let Err(e) = simulation::simulate_transaction_batch(
+                    &eth_api,
+                    tx_request.into(),  // convert to the API's transaction type
+                    BlockId::latest(),  // target block
+                    512,                // batch size
+                    None,               // no base fee override
+                    None,               // no timestamp override
+                ).await {
+                    println!("❌ Simulation batch failed: {:?}", e);
                 }
-                
-                // Execute all simulations in parallel
-                let results = join_all(futures).await;
-                
-                // Count results (handle both spawn errors and call errors)
-                let mut successful = 0;
-                let mut failed = 0;
-                let mut sample_error = None;
-                
-                for result in results {
-                    match result {
-                        Ok(Ok(data)) => {
-                            successful += 1;
-                            println!("   ├─ Unexpected success! Return data: 0x{}", hex::encode(&data));
-                        }
-                        Ok(Err(e)) => {
-                            failed += 1;
-                            if sample_error.is_none() {
-                                sample_error = Some(e.to_string());
-                            }
-                        }
-                        Err(e) => {
-                            failed += 1;
-                            println!("   ├─ Task spawn error: {}", e);
-                        }
-                    }
-                }
-                
-                // Print a sample error/revert reason
-                if let Some(error) = sample_error {
-                    println!("   ├─ Sample revert reason: {}", error);
-                }
-                
-                let batch_elapsed = batch_start.elapsed();
-                println!("✅ Batch simulation complete!");
-                println!("   ├─ Successful: {}", successful);
-                println!("   ├─ Failed: {}", failed);
-                println!("   ├─ Total time: {:.2}ms", batch_elapsed.as_secs_f64() * 1000.0);
-                println!("   └─ Avg per tx: {:.2}ms", (batch_elapsed.as_secs_f64() * 1000.0) / 512.0);
             }
         });
 
