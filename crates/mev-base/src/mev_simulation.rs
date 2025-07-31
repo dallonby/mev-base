@@ -19,6 +19,7 @@ use crate::mev_bundle_types::MevBundle;
 /// 
 /// # Returns
 /// Results for each transaction in your MEV bundle
+#[allow(dead_code)]
 pub async fn simulate_mev_bundle_on_flashblocks<P>(
     provider: P,
     flashblocks: Vec<FlashblocksEvent>,
@@ -56,7 +57,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // use super::*;
     
     #[tokio::test]
     async fn test_mev_simulation() {

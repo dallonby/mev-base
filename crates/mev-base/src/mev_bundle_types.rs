@@ -67,6 +67,7 @@ impl BundleTransaction {
 
 /// An MEV bundle containing multiple transactions
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct MevBundle {
     pub transactions: Vec<BundleTransaction>,
     pub block_number: u64,
@@ -74,6 +75,7 @@ pub struct MevBundle {
 
 impl MevBundle {
     /// Create a new MEV bundle
+    #[allow(dead_code)]
     pub fn new(transactions: Vec<BundleTransaction>, block_number: u64) -> Self {
         Self {
             transactions,
@@ -82,6 +84,7 @@ impl MevBundle {
     }
     
     /// Add a transaction to the bundle
+    #[allow(dead_code)]
     pub fn add_transaction(&mut self, tx: BundleTransaction) {
         self.transactions.push(tx);
     }
