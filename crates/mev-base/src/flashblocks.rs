@@ -27,6 +27,7 @@ pub struct FlashblocksEvent {
     pub transactions: Vec<TxEnvelope>,
     pub state_root: B256,
     pub receipts_root: B256,
+    #[allow(dead_code)]
     pub metadata: Metadata,
 }
 

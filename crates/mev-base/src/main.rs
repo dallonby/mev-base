@@ -11,17 +11,11 @@ use alloy_rpc_types_eth::BlockId;
 use futures::TryStreamExt;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_node_api::FullNodeComponents;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
-mod simulation;
 mod flashblocks;
-mod flashblock_accumulator;
 mod revm_flashblock_executor;
-mod revm_flashblock_manager;
-// mod stateful_simulation;  
-// mod cached_simulation;
-mod in_memory_flashblock_state;
+mod mev_bundle_types;
+mod mev_simulation;
 
 /// Block subscriber ExEx that echoes block numbers
 async fn block_subscriber_exex<Node: FullNodeComponents>(
@@ -96,8 +90,6 @@ fn main() -> eyre::Result<()> {
             .launch()
             .await?;
 
-        // Get the eth API from the launched node and clone it for the spawned task
-        let eth_api = handle.node.add_ons_handle.eth_api().clone();
         
         // Get the provider from the node for revm executor
         let blockchain_provider = handle.node.provider().clone();
@@ -116,17 +108,6 @@ fn main() -> eyre::Result<()> {
         
         println!("🔌 Flashblocks client connected to wss://mainnet.flashblocks.base.org/ws");
         
-        // Create flashblock manager (RPC-based for comparison)
-        let flashblock_manager = Arc::new(Mutex::new(
-            flashblock_accumulator::FlashblockManager::new(
-                eth_api.clone(),
-                11,  // max flashblocks per block (indices 0-10)
-                5,   // keep last 5 blocks in memory
-            )
-        ));
-        
-        // Flag to use revm-based executor instead of RPC
-        let use_revm_executor = true;
         
         // Create a channel for flashblock processing queue
         let (flashblock_tx, mut flashblock_rx) = tokio::sync::mpsc::channel(100);
@@ -166,61 +147,56 @@ fn main() -> eyre::Result<()> {
                 println!("\n🔄 Processing flashblock {} for block {} in simulator thread", 
                     event.index, event.block_number);
                 
-                if use_revm_executor {
-                    // Use revm-based executor
-                    println!("   🔧 Using revm-based executor");
-                    
-                    // Re-initialize for new block if needed
-                    if !revm_initialized || event.block_number != current_block {
-                        if event.block_number != current_block {
-                            println!("   🔄 New block detected: {} -> {}", current_block, event.block_number);
-                            current_block = event.block_number;
-                        }
-                        
-                        match revm_executor.initialize(blockchain_provider_for_task.clone(), BlockId::latest()).await {
-                            Ok(_) => {
-                                println!("   ✅ Revm executor initialized with node provider");
-                                revm_initialized = true;
-                            }
-                            Err(e) => {
-                                println!("   ❌ Failed to initialize revm executor: {:?}", e);
-                                continue;
-                            }
-                        }
+                // Use revm-based executor
+                println!("   🔧 Using revm-based executor");
+                
+                // Re-initialize for new block if needed
+                if !revm_initialized || event.block_number != current_block {
+                    if event.block_number != current_block {
+                        println!("   🔄 New block detected: {} -> {}", current_block, event.block_number);
+                        current_block = event.block_number;
                     }
                     
-                    // Execute with revm
-                    match revm_executor.execute_flashblock(&event, event.index).await {
-                        Ok(results) => {
-                            let successful = results.iter().filter(|r| r.error.is_none()).count();
-                            println!("   📊 Revm execution complete: {}/{} successful", successful, results.len());
-                        }
-                        Err(e) => {
-                            println!("   ❌ Revm execution failed: {:?}", e);
-                        }
-                    }
-                } else {
-                    // Use RPC-based manager
-                    let mut manager = flashblock_manager.lock().await;
-                    match manager.process_flashblock(event.clone(), event.index).await {
+                    match revm_executor.initialize(blockchain_provider_for_task.clone(), BlockId::latest()).await {
                         Ok(_) => {
-                            // Check if we can simulate MEV opportunities
-                            if let Some(accumulator) = manager.get_accumulator(event.block_number) {
-                                println!("   📊 Accumulated state for block {} - {}/{} flashblocks", 
-                                    event.block_number, 
-                                    accumulator.flashblocks_received(),
-                                    11
-                                );
-                                
-                                // Example: Simulate a new MEV transaction on top of current state
-                                // This is where you would add your MEV logic
-                            }
+                            println!("   ✅ Revm executor initialized with node provider");
+                            revm_initialized = true;
                         }
                         Err(e) => {
-                            println!("   ❌ Failed to process flashblock: {:?}", e);
+                            println!("   ❌ Failed to initialize revm executor: {:?}", e);
+                            continue;
                         }
                     }
-                    drop(manager);
+                }
+                
+                // Execute with revm
+                match revm_executor.execute_flashblock(&event, event.index).await {
+                    Ok(results) => {
+                        let successful = results.iter().filter(|r| r.error.is_none()).count();
+                        println!("   📊 Revm execution complete: {}/{} successful", successful, results.len());
+                        
+                        // Example: Simulate an MEV bundle on top of the current flashblock state
+                        // This demonstrates how to test MEV opportunities after flashblock execution
+                        if event.index == 10 && !event.transactions.is_empty() {
+                            println!("\n   🎲 Testing MEV bundle simulation on final flashblock");
+                            
+                            // Create a test bundle with one of the existing transactions
+                            // In real usage, this would be your MEV transactions
+                            let test_bundle = vec![event.transactions[0].clone()];
+                            
+                            match revm_executor.simulate_bundle(test_bundle, event.block_number).await {
+                                Ok(_bundle_results) => {
+                                    println!("   ✅ MEV bundle simulation completed");
+                                }
+                                Err(e) => {
+                                    println!("   ❌ MEV bundle simulation failed: {:?}", e);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("   ❌ Revm execution failed: {:?}", e);
+                    }
                 }
                 
                 println!("🏁 Flashblock {} processing completed in {:.2}ms total", 

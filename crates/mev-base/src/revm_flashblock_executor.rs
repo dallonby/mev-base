@@ -59,6 +59,7 @@ impl RevmFlashblockExecutor {
         let (block_number, header) = match block_id {
             BlockId::Number(alloy_rpc_types_eth::BlockNumberOrTag::Latest) => {
                 let number = provider.best_block_number()?;
+                println!("   🔍 Best block number from provider: {}", number);
                 let header = provider.header_by_number(number)?
                     .ok_or_else(|| eyre::eyre!("Header not found for block {}", number))?;
                 (number, header)
@@ -79,8 +80,15 @@ impl RevmFlashblockExecutor {
         
         // Create a basic header for the EVM environment (since we can't use generic header directly)
         let base_fee = header.base_fee_per_gas();
-        println!("   🔍 Fetched header for block {} - base fee from header: {:?}", 
-            header.number(), base_fee);
+        println!("   🔍 Fetched header for block {}:", header.number());
+        println!("      - Timestamp: {}", header.timestamp());
+        println!("      - Gas limit: {}", header.gas_limit());
+        println!("      - Base fee from header: {:?} (raw value)", base_fee);
+        
+        // For Base mainnet after Bedrock, there should always be a base fee
+        if base_fee.is_none() || base_fee == Some(0) {
+            println!("      ⚠️  WARNING: Base fee is missing or zero! This seems incorrect for Base mainnet.");
+        }
         
         let evm_header = alloy_consensus::Header {
             number: header.number(),
@@ -96,9 +104,12 @@ impl RevmFlashblockExecutor {
         // Set up the EVM environment using the header
         self.evm_env = Some(self.evm_config.evm_env(&evm_header));
         
-        println!("✅ Initialized revm executor for block {} (base fee: {} gwei)", 
+        let base_fee_wei = evm_header.base_fee_per_gas.unwrap_or(0);
+        let base_fee_gwei = base_fee_wei as f64 / 1_000_000_000.0;
+        println!("✅ Initialized revm executor for block {} (base fee: {} wei = {:.4} gwei)", 
             block_number, 
-            evm_header.base_fee_per_gas.unwrap_or(0) / 1_000_000_000);
+            base_fee_wei,
+            base_fee_gwei);
         
         Ok(())
     }
@@ -252,6 +263,38 @@ impl RevmFlashblockExecutor {
         Ok(tx_env)
     }
     
+    /// Convert a transaction request (unsigned) to revm TxEnv
+    pub fn convert_unsigned_tx_to_env(
+        &self,
+        from: alloy_primitives::Address,
+        to: Option<alloy_primitives::Address>,
+        value: alloy_primitives::U256,
+        input: alloy_primitives::Bytes,
+        gas_limit: u64,
+        gas_price: alloy_primitives::U256,
+        nonce: u64,
+    ) -> TxEnv {
+        let mut tx_env = TxEnv::default();
+        
+        tx_env.caller = from;
+        tx_env.gas_limit = gas_limit;
+        tx_env.value = value;
+        tx_env.data = input;
+        tx_env.nonce = nonce;
+        
+        // Set the destination
+        tx_env.kind = match to {
+            Some(addr) => TxKind::Call(addr),
+            None => TxKind::Create,
+        };
+        
+        // For simplicity, assume EIP-1559 style with gas_price as both max fee and priority fee
+        tx_env.gas_price = gas_price.try_into().unwrap_or(u128::MAX);
+        tx_env.gas_priority_fee = Some(gas_price.try_into().unwrap_or(u128::MAX));
+        
+        tx_env
+    }
+    
     /// Convert revm execution result to EthCallResponse
     #[allow(dead_code)]
     fn convert_execution_result(&self, result: ExecutionResult<HaltReason>) -> EthCallResponse {
@@ -291,14 +334,152 @@ impl RevmFlashblockExecutor {
         }
     }
     
-    /// Get statistics about the cached state
-    pub fn get_cache_stats(&self) -> String {
-        if self.cache_db.is_some() {
-            format!("CacheDB initialized and maintaining state across {} flashblocks", 
-                if self.evm_env.is_some() { "active" } else { "inactive" })
-        } else {
-            format!("CacheDB not initialized")
+    
+    /// Simulate a bundle of transactions on top of the current flashblock state
+    /// This is useful for testing MEV opportunities
+    /// 
+    /// Accepts both signed and unsigned transactions through BundleTransaction enum
+    pub async fn simulate_bundle_mixed(
+        &mut self,
+        bundle_txs: Vec<crate::mev_bundle_types::BundleTransaction>,
+        block_number: u64,
+    ) -> eyre::Result<Vec<EthCallResponse>> {
+        println!("\n🎯 Simulating MEV bundle on top of flashblock state");
+        println!("   ├─ Bundle size: {} transactions", bundle_txs.len());
+        println!("   └─ Target block: {}", block_number);
+        
+        let start = std::time::Instant::now();
+        let mut results = Vec::new();
+        
+        // First convert all transactions to avoid borrow conflicts
+        let converted_bundle: Vec<(revm::context::TxEnv, alloy_primitives::B256, Option<alloy_primitives::Bytes>)> = 
+            bundle_txs.iter()
+                .map(|tx| {
+                    use crate::mev_bundle_types::BundleTransaction;
+                    match tx {
+                        BundleTransaction::Signed(signed_tx) => {
+                            let tx_hash = signed_tx.tx_hash();
+                            let tx_env = self.convert_to_tx_env(signed_tx)?;
+                            let enveloped_bytes = signed_tx.encoded_2718();
+                            Ok((tx_env, *tx_hash, Some(alloy_primitives::Bytes::from(enveloped_bytes))))
+                        }
+                        BundleTransaction::Unsigned { from, to, value, input, gas_limit, gas_price, nonce } => {
+                            let tx_env = self.convert_unsigned_tx_to_env(
+                                *from, *to, *value, input.clone(), *gas_limit, *gas_price, *nonce
+                            );
+                            // Use zero hash for unsigned transactions
+                            Ok((tx_env, alloy_primitives::B256::ZERO, None))
+                        }
+                    }
+                })
+                .collect::<eyre::Result<Vec<_>>>()?;
+        
+        // Now get the cache_db and evm_env references
+        let cache_db = self.cache_db.as_mut()
+            .ok_or_else(|| eyre::eyre!("Executor not initialized. Call initialize() first."))?;
+        
+        let evm_env = self.evm_env.as_ref()
+            .ok_or_else(|| eyre::eyre!("EVM environment not initialized."))?;
+        
+        // Now simulate each transaction
+        for (i, (tx_env, tx_hash, enveloped_bytes)) in converted_bundle.into_iter().enumerate() {
+            if tx_hash == alloy_primitives::B256::ZERO {
+                println!("   ├─ MEV Tx {}/{}: [unsigned]", i + 1, bundle_txs.len());
+            } else {
+                println!("   ├─ MEV Tx {}/{}: {}", i + 1, bundle_txs.len(), tx_hash);
+            }
+            
+            // Create OpTransaction with enveloped bytes
+            let mut op_tx = OpTransaction::new(tx_env);
+            if let Some(bytes) = enveloped_bytes {
+                op_tx.enveloped_tx = Some(bytes);
+            } else {
+                // For unsigned transactions, create a dummy envelope
+                op_tx.enveloped_tx = Some(alloy_primitives::Bytes::from(vec![0x00]));
+            }
+            
+            // Create the EVM with our cached database
+            let mut evm = self.evm_config.evm_with_env(
+                &mut *cache_db,
+                evm_env.clone()
+            );
+            
+            // Execute the transaction
+            let result = evm.transact(op_tx);
+            
+            // Process the result but DON'T commit state (we're just simulating)
+            let response = match result {
+                Ok(exec_result) => {
+                    let gas_used = exec_result.result.gas_used();
+                    match exec_result.result {
+                        ExecutionResult::Success { output, .. } => {
+                            let value = match output {
+                                Output::Call(bytes) => bytes,
+                                Output::Create(bytes, _) => bytes,
+                            };
+                            println!("      ✅ Success: gas used {} ({}k)", gas_used, gas_used / 1000);
+                            EthCallResponse {
+                                value: Some(value),
+                                error: None,
+                                gas_used: Some(gas_used),
+                            }
+                        }
+                        ExecutionResult::Revert { output, .. } => {
+                            let error_msg = format!("execution reverted: 0x{}", hex::encode(&output));
+                            println!("      ❌ Reverted: {}", error_msg);
+                            EthCallResponse {
+                                value: None,
+                                error: Some(error_msg),
+                                gas_used: Some(gas_used),
+                            }
+                        }
+                        ExecutionResult::Halt { reason, .. } => {
+                            let error_msg = format!("execution halted: {:?}", reason);
+                            println!("      ❌ Halted: {}", error_msg);
+                            EthCallResponse {
+                                value: None,
+                                error: Some(error_msg),
+                                gas_used: Some(gas_used),
+                            }
+                        }
+                    }
+                    // Note: We're NOT committing state changes for bundle simulation
+                }
+                Err(ref e) => {
+                    println!("      ❌ Failed: {:?}", e);
+                    EthCallResponse {
+                        value: None,
+                        error: Some(format!("EVM error: {:?}", e)),
+                        gas_used: None,
+                    }
+                }
+            };
+            
+            results.push(response);
         }
+        
+        let elapsed = start.elapsed();
+        println!("   └─ Bundle simulation completed in {:.2}ms ({:.2}ms per tx avg)", 
+            elapsed.as_secs_f64() * 1000.0,
+            (elapsed.as_secs_f64() * 1000.0) / bundle_txs.len() as f64
+        );
+        
+        Ok(results)
+    }
+    
+    /// Simulate a bundle of signed transactions on top of the current flashblock state
+    /// This is a convenience method for bundles containing only signed transactions
+    pub async fn simulate_bundle(
+        &mut self,
+        bundle_txs: Vec<TxEnvelope>,
+        block_number: u64,
+    ) -> eyre::Result<Vec<EthCallResponse>> {
+        use crate::mev_bundle_types::BundleTransaction;
+        let mixed_bundle: Vec<BundleTransaction> = bundle_txs
+            .into_iter()
+            .map(BundleTransaction::Signed)
+            .collect();
+        self.simulate_bundle_mixed(mixed_bundle, block_number).await
     }
 }
 
