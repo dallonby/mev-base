@@ -15,6 +15,9 @@ use tokio::sync::Mutex;
 mod simulation;
 mod flashblocks;
 mod flashblock_accumulator;
+// mod stateful_simulation;
+// mod cached_simulation;
+mod in_memory_flashblock_state;
 
 /// Block subscriber ExEx that echoes block numbers
 async fn block_subscriber_exex<Node: FullNodeComponents>(

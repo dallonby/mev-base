@@ -149,7 +149,9 @@ where
             let api_requests: Vec<_> = tx_requests.into_iter()
                 .zip(tx_hashes.clone().into_iter())
                 .map(|(req, hash)| {
-                    // This is a workaround - in a real implementation you'd want proper conversion
+                    // Convert between transaction request types using JSON as a bridge
+                    // This handles the type system mismatch between our TransactionRequest 
+                    // and the API's TransactionRequest type
                     let json = serde_json::to_value(req).unwrap();
                     let api_tx = serde_json::from_value(json).unwrap();
                     BundleSimulationRequest {
