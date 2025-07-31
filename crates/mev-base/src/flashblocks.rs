@@ -23,6 +23,7 @@ pub struct Metadata {
 #[derive(Debug, Clone)]
 pub struct FlashblocksEvent {
     pub block_number: u64,
+    pub index: u32,
     pub transactions: Vec<TxEnvelope>,
     pub state_root: B256,
     pub receipts_root: B256,
@@ -202,6 +203,7 @@ async fn process_payload(
     
     let event = FlashblocksEvent {
         block_number,
+        index: payload.index as u32,
         transactions,
         state_root: diff.state_root,
         receipts_root: diff.receipts_root,

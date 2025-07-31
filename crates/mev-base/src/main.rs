@@ -9,13 +9,12 @@ use reth_provider::ReceiptProvider;
 use futures::TryStreamExt;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_node_api::FullNodeComponents;
-use alloy_rpc_types_eth::{TransactionRequest, BlockId};
-use alloy_primitives::{Address, U256, TxKind};
-use alloy_consensus::Transaction;
-use std::str::FromStr;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 mod simulation;
 mod flashblocks;
+mod flashblock_accumulator;
 
 /// Block subscriber ExEx that echoes block numbers
 async fn block_subscriber_exex<Node: FullNodeComponents>(
@@ -107,57 +106,75 @@ fn main() -> eyre::Result<()> {
         
         println!("🔌 Flashblocks client connected to wss://mainnet.flashblocks.base.org/ws");
         
-        // Spawn task to handle flashblocks events
+        // Create flashblock manager
+        let flashblock_manager = Arc::new(Mutex::new(
+            flashblock_accumulator::FlashblockManager::new(
+                eth_api.clone(),
+                11,  // max flashblocks per block (indices 0-10)
+                5,   // keep last 5 blocks in memory
+            )
+        ));
+        
+        // Create a channel for flashblock processing queue
+        let (flashblock_tx, mut flashblock_rx) = tokio::sync::mpsc::channel(100);
+        
+        // Spawn task to receive flashblocks and queue them
         tokio::spawn(async move {
             while let Ok(event) = flashblocks_receiver.recv().await {
                 println!("\n📦 Flashblocks Event:");
                 println!("   ├─ Block: {}", event.block_number);
+                println!("   ├─ Index: {}", event.index);
                 println!("   ├─ Transactions: {}", event.transactions.len());
                 println!("   ├─ State Root: {}", event.state_root);
                 println!("   └─ Receipts Root: {}", event.receipts_root);
                 
-                // Here you can analyze the transactions for MEV opportunities
-                for (i, tx) in event.transactions.iter().enumerate() {
-                    if i < 3 {  // Show first 3 transactions
-                        match tx {
-                            alloy_consensus::TxEnvelope::Legacy(legacy_tx) => {
-                                println!("      ├─ Tx {} (Legacy): {:?} -> {:?}", 
-                                    i, 
-                                    legacy_tx.recover_signer().ok(),
-                                    legacy_tx.to()
-                                );
-                            }
-                            alloy_consensus::TxEnvelope::Eip2930(eip2930_tx) => {
-                                println!("      ├─ Tx {} (EIP-2930): {:?} -> {:?}", 
-                                    i, 
-                                    eip2930_tx.recover_signer().ok(),
-                                    eip2930_tx.to()
-                                );
-                            }
-                            alloy_consensus::TxEnvelope::Eip1559(eip1559_tx) => {
-                                println!("      ├─ Tx {} (EIP-1559): {:?} -> {:?}", 
-                                    i, 
-                                    eip1559_tx.recover_signer().ok(),
-                                    eip1559_tx.to()
-                                );
-                            }
-                            alloy_consensus::TxEnvelope::Eip4844(eip4844_tx) => {
-                                println!("      ├─ Tx {} (EIP-4844): {:?} -> {:?}", 
-                                    i, 
-                                    eip4844_tx.recover_signer().ok(),
-                                    eip4844_tx.to()
-                                );
-                            }
-                            _ => {
-                                println!("      ├─ Tx {} (Unknown type)", i);
-                            }
-                        }
-                    }
-                }
-                if event.transactions.len() > 3 {
-                    println!("      └─ ... and {} more transactions", event.transactions.len() - 3);
+                // Queue the event for processing
+                if let Err(e) = flashblock_tx.send(event).await {
+                    println!("❌ Failed to queue flashblock: {}", e);
                 }
             }
+        });
+        
+        // Spawn dedicated synchronous flashblock simulator thread
+        tokio::spawn(async move {
+            println!("🚀 Starting dedicated flashblock simulator thread");
+            
+            while let Some(event) = flashblock_rx.recv().await {
+                let sim_start = std::time::Instant::now();
+                println!("\n🔄 Processing flashblock {} for block {} in simulator thread", 
+                    event.index, event.block_number);
+                
+                // Process flashblock with the manager - this is now synchronous
+                let mut manager = flashblock_manager.lock().await;
+                match manager.process_flashblock(event.clone(), event.index).await {
+                    Ok(_) => {
+                        // Check if we can simulate MEV opportunities
+                        if let Some(accumulator) = manager.get_accumulator(event.block_number) {
+                            println!("   📊 Accumulated state for block {} - {}/{} flashblocks", 
+                                event.block_number, 
+                                accumulator.flashblocks_received(),
+                                11
+                            );
+                            
+                            // Example: Simulate a new MEV transaction on top of current state
+                            // This is where you would add your MEV logic
+                        }
+                    }
+                    Err(e) => {
+                        println!("   ❌ Failed to process flashblock: {:?}", e);
+                    }
+                }
+                
+                // Release the lock before logging
+                drop(manager);
+                
+                println!("🏁 Flashblock {} processing completed in {:.2}ms total", 
+                    event.index, 
+                    sim_start.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+            
+            println!("⚠️  Flashblock simulator thread exiting");
         });
         
         // // Spawn a task to simulate calls every 2 seconds
