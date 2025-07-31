@@ -72,6 +72,7 @@ alloy-serde.workspace = true
 alloy-json-rpc.workspace = true
 alloy-signer-local.workspace = true
 alloy-sol-types.workspace = true
+alloy-rlp = "0.3"
 
 # op
 alloy-op-evm.workspace = true
@@ -124,6 +125,7 @@ hex = "0.4"
 ureq = "2.10"
 
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", branch = "main" }
+brotli = "8.0.1"
 
 dashmap = { version = "6.1", optional = true }
 nanoid = { version = "0.4", optional = true }

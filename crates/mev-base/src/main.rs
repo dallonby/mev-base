@@ -11,9 +11,11 @@ use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_node_api::FullNodeComponents;
 use alloy_rpc_types_eth::{TransactionRequest, BlockId};
 use alloy_primitives::{Address, U256, TxKind};
+use alloy_consensus::Transaction;
 use std::str::FromStr;
 
 mod simulation;
+mod flashblocks;
 
 /// Block subscriber ExEx that echoes block numbers
 async fn block_subscriber_exex<Node: FullNodeComponents>(
@@ -91,39 +93,106 @@ fn main() -> eyre::Result<()> {
         // Get the eth API from the launched node and clone it for the spawned task
         let eth_api = handle.node.add_ons_handle.eth_api().clone();
         
-        // Spawn a task to simulate calls every 2 seconds
+        // Start flashblocks client
+        let mut flashblocks_client = flashblocks::FlashblocksClient::new(
+            "wss://mainnet.flashblocks.base.org/ws".to_string(),
+            4096, // event buffer size
+        );
+        
+        // Subscribe to flashblocks events
+        let mut flashblocks_receiver = flashblocks_client.subscribe();
+        
+        // Start the flashblocks connection
+        flashblocks_client.start().await?;
+        
+        println!("🔌 Flashblocks client connected to wss://mainnet.flashblocks.base.org/ws");
+        
+        // Spawn task to handle flashblocks events
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
-            
-            loop {
-                interval.tick().await;
+            while let Ok(event) = flashblocks_receiver.recv().await {
+                println!("\n📦 Flashblocks Event:");
+                println!("   ├─ Block: {}", event.block_number);
+                println!("   ├─ Transactions: {}", event.transactions.len());
+                println!("   ├─ State Root: {}", event.state_root);
+                println!("   └─ Receipts Root: {}", event.receipts_root);
                 
-                let from_addr = Address::from_str("0xd0ffEe48945a9518b0B543a2C59dFb102221fBb7").unwrap();
-                let to_addr = Address::from_str("0x38cef6277942faf66b9cd9f1b5132d68ba175b32").unwrap();
-                
-                // Create the transaction request
-                let tx_request = TransactionRequest {
-                    from: Some(from_addr),
-                    to: Some(TxKind::Call(to_addr)),
-                    value: Some(U256::from(0)),
-                    gas: Some(1_000_000_000), // 1 billion gas
-                    input: hex::decode("73eab4900000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000012c00000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000001dc8cff000000000000000000000000000000000000000000000000000000000000001e000000000000000000000000000000000000000000000000000000000000753000000000000000000000000038cef6277942faf66b9cd9f1b5132d68ba175b3200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000").unwrap().into(),
-                    ..Default::default()
-                };
-                
-                // Call the simulation function
-                if let Err(e) = simulation::simulate_transaction_batch(
-                    &eth_api,
-                    tx_request.into(),  // convert to the API's transaction type
-                    BlockId::latest(),  // target block
-                    512,                // batch size
-                    None,               // no base fee override
-                    None,               // no timestamp override
-                ).await {
-                    println!("❌ Simulation batch failed: {:?}", e);
+                // Here you can analyze the transactions for MEV opportunities
+                for (i, tx) in event.transactions.iter().enumerate() {
+                    if i < 3 {  // Show first 3 transactions
+                        match tx {
+                            alloy_consensus::TxEnvelope::Legacy(legacy_tx) => {
+                                println!("      ├─ Tx {} (Legacy): {:?} -> {:?}", 
+                                    i, 
+                                    legacy_tx.recover_signer().ok(),
+                                    legacy_tx.to()
+                                );
+                            }
+                            alloy_consensus::TxEnvelope::Eip2930(eip2930_tx) => {
+                                println!("      ├─ Tx {} (EIP-2930): {:?} -> {:?}", 
+                                    i, 
+                                    eip2930_tx.recover_signer().ok(),
+                                    eip2930_tx.to()
+                                );
+                            }
+                            alloy_consensus::TxEnvelope::Eip1559(eip1559_tx) => {
+                                println!("      ├─ Tx {} (EIP-1559): {:?} -> {:?}", 
+                                    i, 
+                                    eip1559_tx.recover_signer().ok(),
+                                    eip1559_tx.to()
+                                );
+                            }
+                            alloy_consensus::TxEnvelope::Eip4844(eip4844_tx) => {
+                                println!("      ├─ Tx {} (EIP-4844): {:?} -> {:?}", 
+                                    i, 
+                                    eip4844_tx.recover_signer().ok(),
+                                    eip4844_tx.to()
+                                );
+                            }
+                            _ => {
+                                println!("      ├─ Tx {} (Unknown type)", i);
+                            }
+                        }
+                    }
+                }
+                if event.transactions.len() > 3 {
+                    println!("      └─ ... and {} more transactions", event.transactions.len() - 3);
                 }
             }
         });
+        
+        // // Spawn a task to simulate calls every 2 seconds
+        // tokio::spawn(async move {
+        //     let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+            
+        //     loop {
+        //         interval.tick().await;
+                
+        //         let from_addr = Address::from_str("0xd0ffEe48945a9518b0B543a2C59dFb102221fBb7").unwrap();
+        //         let to_addr = Address::from_str("0x38cef6277942faf66b9cd9f1b5132d68ba175b32").unwrap();
+                
+        //         // Create the transaction request
+        //         let tx_request = TransactionRequest {
+        //             from: Some(from_addr),
+        //             to: Some(TxKind::Call(to_addr)),
+        //             value: Some(U256::from(0)),
+        //             gas: Some(1_000_000_000), // 1 billion gas
+        //             input: hex::decode("73eab4900000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000012c00000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000001dc8cff000000000000000000000000000000000000000000000000000000000000001e000000000000000000000000000000000000000000000000000000000000753000000000000000000000000038cef6277942faf66b9cd9f1b5132d68ba175b3200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000").unwrap().into(),
+        //             ..Default::default()
+        //         };
+                
+        //         // Call the simulation function
+        //         if let Err(e) = simulation::simulate_transaction_batch(
+        //             &eth_api,
+        //             tx_request.into(),  // convert to the API's transaction type
+        //             BlockId::latest(),  // target block
+        //             512,                // batch size
+        //             None,               // no base fee override
+        //             None,               // no timestamp override
+        //         ).await {
+        //             println!("❌ Simulation batch failed: {:?}", e);
+        //         }
+        //     }
+        // });
 
         handle.wait_for_node_exit().await
     })
