@@ -13,9 +13,11 @@ use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_node_api::FullNodeComponents;
 
 mod flashblocks;
-mod revm_flashblock_executor;
+mod flashblock_state;
 mod mev_bundle_types;
+mod mev_search_worker;
 mod mev_simulation;
+mod revm_flashblock_executor;
 
 /// Block subscriber ExEx that echoes block numbers
 async fn block_subscriber_exex<Node: FullNodeComponents>(
@@ -132,6 +134,22 @@ fn main() -> eyre::Result<()> {
         // Clone provider for the spawned task
         let blockchain_provider_for_task = blockchain_provider.clone();
         
+        // Create work-stealing MEV search system
+        let (mev_system, mut mev_result_rx) = mev_search_worker::create_mev_search_system();
+        
+        // Spawn MEV opportunity handler
+        tokio::spawn(async move {
+            while let Some(opportunity) = mev_result_rx.recv().await {
+                println!("💰 MEV Opportunity Found!");
+                println!("   ├─ Strategy: {}", opportunity.strategy);
+                println!("   ├─ Block: {} Flashblock: {}", opportunity.block_number, opportunity.flashblock_index);
+                println!("   ├─ Expected Profit: {} wei", opportunity.expected_profit);
+                println!("   └─ Bundle size: {} txs", opportunity.bundle.transactions.len());
+                
+                // TODO: Submit bundle to builder or execute on-chain
+            }
+        });
+        
         // Spawn dedicated synchronous flashblock simulator thread
         tokio::spawn(async move {
             println!("🚀 Starting dedicated flashblock simulator thread");
@@ -174,6 +192,40 @@ fn main() -> eyre::Result<()> {
                     Ok(results) => {
                         let successful = results.iter().filter(|r| r.error.is_none()).count();
                         println!("   📊 Revm execution complete: {}/{} successful", successful, results.len());
+                        
+                        // Export state snapshot and trigger MEV search
+                        let export_start = std::time::Instant::now();
+                        match revm_executor.export_state_snapshot(event.index, event.transactions.clone()) {
+                            Ok(state_snapshot) => {
+                                let export_time = export_start.elapsed().as_secs_f64() * 1000.0;
+                                println!("   📸 State snapshot exported with {} accounts in {:.2}ms", 
+                                    state_snapshot.account_changes.len(), export_time);
+                                
+                                // Analyze state to determine which strategies to trigger
+                                let strategies = mev_search_worker::analyze_state_for_strategies(&state_snapshot);
+                                
+                                if !strategies.is_empty() {
+                                    println!("   🎯 Triggering {} MEV strategies: {:?}", strategies.len(), strategies);
+                                    
+                                    // Create a task for each relevant strategy
+                                    for strategy in strategies {
+                                        let mev_task = mev_search_worker::MevSearchTask {
+                                            state: state_snapshot.clone(),
+                                            strategy,
+                                            flashblock_received_at: event.received_at,
+                                        };
+                                        
+                                        // Submit to work-stealing queue
+                                        mev_system.submit_task(mev_task);
+                                    }
+                                } else {
+                                    println!("   ⏭️  No MEV strategies triggered for this flashblock");
+                                }
+                            }
+                            Err(e) => {
+                                println!("   ❌ Failed to export state snapshot: {:?}", e);
+                            }
+                        }
                         
                         // Example: Simulate an MEV bundle on top of the current flashblock state
                         // This demonstrates how to test MEV opportunities after flashblock execution

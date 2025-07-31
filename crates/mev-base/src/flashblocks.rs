@@ -29,6 +29,7 @@ pub struct FlashblocksEvent {
     pub receipts_root: B256,
     #[allow(dead_code)]
     pub metadata: Metadata,
+    pub received_at: std::time::Instant,
 }
 
 /// Actor messages for internal communication
@@ -209,6 +210,7 @@ async fn process_payload(
         state_root: diff.state_root,
         receipts_root: diff.receipts_root,
         metadata,
+        received_at: std::time::Instant::now(),
     };
     
     // Send event to subscribers

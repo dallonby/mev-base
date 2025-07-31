@@ -1,0 +1,425 @@
+use crate::flashblock_state::FlashblockStateSnapshot;
+use crate::mev_bundle_types::{MevBundle, BundleTransaction};
+use alloy_primitives::{Address, U256, Bytes};
+use alloy_consensus::Transaction;
+use tokio::sync::mpsc;
+use crossbeam::deque::{Injector, Stealer, Worker};
+use std::sync::Arc;
+use std::time::Duration;
+
+/// MEV strategy types
+#[derive(Clone, Debug, Copy, PartialEq, Eq, Hash)]
+pub enum MevStrategy {
+    DexArbitrage,
+    Liquidation,
+    Sandwich,
+    JitLiquidity,
+    // Add more strategies here
+}
+
+/// Message to MEV search workers
+#[derive(Clone)]
+pub struct MevSearchTask {
+    /// The flashblock state to search on
+    pub state: FlashblockStateSnapshot,
+    /// Which strategy to execute
+    pub strategy: MevStrategy,
+    /// When the flashblock was originally received
+    pub flashblock_received_at: std::time::Instant,
+}
+
+/// Discovered MEV opportunity
+#[derive(Debug, Clone)]
+pub struct MevOpportunity {
+    /// The flashblock state this was found on
+    pub block_number: u64,
+    pub flashblock_index: u32,
+    /// The MEV bundle to execute
+    pub bundle: MevBundle,
+    /// Expected profit in wei
+    pub expected_profit: U256,
+    /// Strategy that found this
+    pub strategy: String,
+}
+
+/// Work-stealing MEV search system optimized for high core counts
+pub struct MevSearchSystem {
+    /// Global work queue
+    injector: Arc<Injector<MevSearchTask>>,
+    /// Worker stealers for load balancing
+    _stealers: Vec<Stealer<MevSearchTask>>,
+    /// Channel for results
+    _result_tx: mpsc::Sender<MevOpportunity>,
+}
+
+impl MevSearchSystem {
+    /// Create a new MEV search system with specified number of workers
+    pub fn new(num_workers: usize) -> (Self, mpsc::Receiver<MevOpportunity>) {
+        let injector = Arc::new(Injector::new());
+        let mut stealers = Vec::new();
+        let mut workers = Vec::new();
+        
+        // Create worker queues
+        for _ in 0..num_workers {
+            let worker = Worker::new_fifo();
+            stealers.push(worker.stealer());
+            workers.push(worker);
+        }
+        
+        let (result_tx, result_rx) = mpsc::channel(1000); // Larger buffer for 128 cores
+        
+        // Spawn worker threads
+        for (worker_id, worker) in workers.into_iter().enumerate() {
+            let injector = injector.clone();
+            let stealers = stealers.clone();
+            let result_tx = result_tx.clone();
+            
+            tokio::spawn(async move {
+                mev_search_worker_steal(
+                    worker_id,
+                    worker,
+                    injector,
+                    stealers,
+                    result_tx,
+                ).await;
+            });
+        }
+        
+        let system = Self {
+            injector,
+            _stealers: stealers,
+            _result_tx: result_tx,
+        };
+        
+        (system, result_rx)
+    }
+    
+    /// Submit a task to the work queue
+    pub fn submit_task(&self, task: MevSearchTask) {
+        self.injector.push(task);
+    }
+}
+
+/// Worker that uses work-stealing for efficient task distribution
+async fn mev_search_worker_steal(
+    worker_id: usize,
+    worker: Worker<MevSearchTask>,
+    injector: Arc<Injector<MevSearchTask>>,
+    stealers: Vec<Stealer<MevSearchTask>>,
+    result_tx: mpsc::Sender<MevOpportunity>,
+) {
+    println!("🔍 MEV Search Worker {} starting (work-stealing enabled)", worker_id);
+    
+    loop {
+        // First, try to get work from local queue
+        let task = worker.pop().or_else(|| {
+            // Try global queue
+            loop {
+                match injector.steal() {
+                    crossbeam::deque::Steal::Success(t) => return Some(t),
+                    crossbeam::deque::Steal::Empty => break,
+                    crossbeam::deque::Steal::Retry => continue,
+                }
+            }
+            
+            // Try stealing from other workers
+            for (i, stealer) in stealers.iter().enumerate() {
+                if i != worker_id {
+                    loop {
+                        match stealer.steal() {
+                            crossbeam::deque::Steal::Success(t) => return Some(t),
+                            crossbeam::deque::Steal::Empty => break,
+                            crossbeam::deque::Steal::Retry => continue,
+                        }
+                    }
+                }
+            }
+            
+            None
+        });
+        
+        if let Some(task) = task {
+            let state = &task.state;
+            
+            // Calculate latency from flashblock receipt to now
+            let latency_ms = task.flashblock_received_at.elapsed().as_secs_f64() * 1000.0;
+            
+            println!(
+                "   ⏱️  Worker {} starting {} search on block {} fb {} (latency: {:.2}ms)",
+                worker_id,
+                match task.strategy {
+                    MevStrategy::DexArbitrage => "DEX arbitrage",
+                    MevStrategy::Liquidation => "liquidation",
+                    MevStrategy::Sandwich => "sandwich",
+                    MevStrategy::JitLiquidity => "JIT liquidity",
+                },
+                state.block_number,
+                state.flashblock_index,
+                latency_ms
+            );
+            
+            // Execute only the specified strategy
+            match task.strategy {
+                MevStrategy::DexArbitrage => {
+                    search_dex_arbitrage(worker_id, state, &result_tx).await;
+                }
+                MevStrategy::Liquidation => {
+                    search_liquidations(worker_id, state, &result_tx).await;
+                }
+                MevStrategy::Sandwich => {
+                    search_sandwich_opportunities(worker_id, state, &result_tx).await;
+                }
+                MevStrategy::JitLiquidity => {
+                    search_jit_liquidity(worker_id, state, &result_tx).await;
+                }
+            }
+        } else {
+            // No work available, sleep briefly
+            tokio::time::sleep(Duration::from_micros(100)).await;
+        }
+    }
+}
+
+/// Mock DEX arbitrage searcher
+async fn search_dex_arbitrage(
+    worker_id: usize,
+    state: &FlashblockStateSnapshot,
+    result_tx: &mpsc::Sender<MevOpportunity>,
+) {
+    // MOCK: Find arbitrage on every 3rd flashblock
+    if state.flashblock_index % 3 == 0 {
+        let mock_bundle = MevBundle::new(
+            vec![
+                BundleTransaction::unsigned(
+                    Address::from([0x01; 20]),
+                    Some(Address::from([0xAA; 20])), // Uniswap
+                    U256::from(1_000_000_000_000_000_000u128),
+                    Bytes::from(vec![0x11; 4]),
+                    500_000,
+                    U256::from(state.base_fee),
+                    0,
+                ),
+                BundleTransaction::unsigned(
+                    Address::from([0x01; 20]),
+                    Some(Address::from([0xBB; 20])), // SushiSwap
+                    U256::ZERO,
+                    Bytes::from(vec![0x22; 4]),
+                    500_000,
+                    U256::from(state.base_fee),
+                    1,
+                ),
+            ],
+            state.block_number,
+        );
+        
+        let opportunity = MevOpportunity {
+            block_number: state.block_number,
+            flashblock_index: state.flashblock_index,
+            bundle: mock_bundle,
+            expected_profit: U256::from(50_000_000_000_000_000u128),
+            strategy: format!("DEXArbitrage_Worker{}", worker_id),
+        };
+        
+        let _ = result_tx.send(opportunity).await;
+    }
+}
+
+/// Mock liquidation searcher
+async fn search_liquidations(
+    worker_id: usize,
+    state: &FlashblockStateSnapshot,
+    result_tx: &mpsc::Sender<MevOpportunity>,
+) {
+    // MOCK: Find liquidation on every 5th flashblock
+    if state.flashblock_index % 5 == 0 {
+        let mock_bundle = MevBundle::new(
+            vec![
+                BundleTransaction::unsigned(
+                    Address::from([0x02; 20]),
+                    Some(Address::from([0xCC; 20])), // Lending protocol
+                    U256::from(2_000_000_000_000_000_000u128),
+                    Bytes::from(vec![0x33; 4]), // liquidate()
+                    800_000,
+                    U256::from(state.base_fee),
+                    0,
+                ),
+            ],
+            state.block_number,
+        );
+        
+        let opportunity = MevOpportunity {
+            block_number: state.block_number,
+            flashblock_index: state.flashblock_index,
+            bundle: mock_bundle,
+            expected_profit: U256::from(100_000_000_000_000_000u128),
+            strategy: format!("Liquidation_Worker{}", worker_id),
+        };
+        
+        let _ = result_tx.send(opportunity).await;
+    }
+}
+
+/// Mock sandwich attack searcher
+async fn search_sandwich_opportunities(
+    _worker_id: usize,
+    state: &FlashblockStateSnapshot,
+    _result_tx: &mpsc::Sender<MevOpportunity>,
+) {
+    // MOCK: Would analyze pending transactions for large swaps
+    if state.flashblock_index % 7 == 0 {
+        // In production, would create front-run and back-run transactions
+        // For now, just simulate search time
+        tokio::time::sleep(Duration::from_micros(500)).await;
+    }
+}
+
+/// Mock JIT liquidity searcher
+async fn search_jit_liquidity(
+    _worker_id: usize,
+    state: &FlashblockStateSnapshot,
+    _result_tx: &mpsc::Sender<MevOpportunity>,
+) {
+    // MOCK: Would look for large swaps to provide just-in-time liquidity
+    if state.flashblock_index % 11 == 0 {
+        // In production, would add/remove liquidity around large trades
+        tokio::time::sleep(Duration::from_micros(300)).await;
+    }
+}
+
+/// Known function selectors for MEV detection
+mod selectors {
+    // Chainlink oracle update functions (trigger liquidation checks)
+    pub const CHAINLINK_LATEST_ANSWER: &[u8] = &[0x50, 0xd2, 0x5b, 0xcd]; // latestAnswer()
+    pub const CHAINLINK_TRANSMIT: &[u8] = &[0x9a, 0x6f, 0xc8, 0xf5]; // transmit()
+    pub const CHAINLINK_SUBMIT: &[u8] = &[0xc9, 0x80, 0x75, 0x39]; // submit()
+    pub const CHAINLINK_FORWARD: &[u8] = &[0x6f, 0xad, 0xcf, 0x72]; // forward()
+    
+    // Common DEX swap functions (for arbitrage detection)
+    pub const UNISWAP_V2_SWAP: &[u8] = &[0x02, 0x2c, 0x0d, 0x9f]; // swap()
+    pub const UNISWAP_V3_SWAP: &[u8] = &[0x12, 0x8a, 0xca, 0xb4]; // swap()
+    pub const UNISWAP_V3_MULTICALL: &[u8] = &[0xac, 0x96, 0x50, 0xd8]; // multicall()
+    
+    pub fn is_oracle_update(calldata: &[u8]) -> bool {
+        calldata.starts_with(CHAINLINK_LATEST_ANSWER) ||
+        calldata.starts_with(CHAINLINK_TRANSMIT) ||
+        calldata.starts_with(CHAINLINK_SUBMIT) ||
+        calldata.starts_with(CHAINLINK_FORWARD)
+    }
+    
+    pub fn is_dex_swap(calldata: &[u8]) -> bool {
+        calldata.starts_with(UNISWAP_V2_SWAP) ||
+        calldata.starts_with(UNISWAP_V3_SWAP) ||
+        calldata.starts_with(UNISWAP_V3_MULTICALL)
+    }
+}
+
+/// Known protocol addresses on Base
+mod base_addresses {
+    use alloy_primitives::Address;
+    
+    // Uniswap V3 on Base
+    pub const UNISWAP_V3_FACTORY: &str = "0x33128a8fC17869897dcE68Ed026d694621f6FDfD";
+    pub const UNISWAP_V3_ROUTER: &str = "0x2626664c2603336E57B271c5C0b26F421741e481";
+    
+    // BaseSwap (Uniswap V2 fork)
+    pub const BASESWAP_FACTORY: &str = "0xFDa619b6d20975be80A10332cD39b9a4b0FAa8BB";
+    pub const BASESWAP_ROUTER: &str = "0x327Df1E6de05895d2ab08513aaDD9313Fe505d86";
+    
+    // Aerodrome (major DEX on Base)
+    pub const AERODROME_ROUTER: &str = "0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43";
+    
+    // SushiSwap on Base
+    pub const SUSHI_V3_FACTORY: &str = "0xb45e53277a7e0F1D35f2a77160e91e25507f1763";
+    
+    pub fn is_dex_address(addr: &Address) -> bool {
+        let addr_str = format!("{:?}", addr);
+        addr_str.contains(&UNISWAP_V3_FACTORY[2..]) ||
+        addr_str.contains(&UNISWAP_V3_ROUTER[2..]) ||
+        addr_str.contains(&BASESWAP_FACTORY[2..]) ||
+        addr_str.contains(&BASESWAP_ROUTER[2..]) ||
+        addr_str.contains(&AERODROME_ROUTER[2..]) ||
+        addr_str.contains(&SUSHI_V3_FACTORY[2..])
+    }
+}
+
+/// Analyze state changes to determine which MEV strategies to trigger
+pub fn analyze_state_for_strategies(state: &FlashblockStateSnapshot) -> Vec<MevStrategy> {
+    use std::collections::HashSet;
+    let mut strategies = HashSet::new();
+    
+    // Analyze actual state changes
+    for (address, _account_info) in &state.account_changes {
+        // Check if DEX-related addresses were touched
+        if base_addresses::is_dex_address(address) {
+            strategies.insert(MevStrategy::DexArbitrage);
+        }
+        
+        // TODO: Add lending protocol addresses for liquidations
+        // TODO: Detect large balance changes for sandwich opportunities
+    }
+    
+    // Also analyze storage changes
+    for (address, storage_changes) in &state.storage_changes {
+        if !storage_changes.is_empty() && base_addresses::is_dex_address(address) {
+            strategies.insert(MevStrategy::DexArbitrage);
+        }
+    }
+    
+    // Analyze transaction calldata for MEV signals
+    for tx in &state.transactions {
+        let calldata = tx.input();
+        
+        // Oracle updates trigger liquidation checks
+        if calldata.len() >= 4 && selectors::is_oracle_update(calldata) {
+            strategies.insert(MevStrategy::Liquidation);
+        }
+        
+        // DEX swaps suggest arbitrage opportunities
+        if calldata.len() >= 4 && selectors::is_dex_swap(calldata) {
+            strategies.insert(MevStrategy::DexArbitrage);
+        }
+    }
+    
+    // Fallback to mock logic if no real strategies triggered
+    if strategies.is_empty() {
+        // Use mock logic based on flashblock index
+        if state.flashblock_index % 3 == 0 {
+            strategies.insert(MevStrategy::DexArbitrage);
+        }
+        if state.flashblock_index % 5 == 0 {
+            strategies.insert(MevStrategy::Liquidation);
+        }
+        if state.flashblock_index % 7 == 0 {
+            strategies.insert(MevStrategy::Sandwich);
+        }
+        if state.flashblock_index % 11 == 0 {
+            strategies.insert(MevStrategy::JitLiquidity);
+        }
+    }
+    
+    strategies.into_iter().collect()
+}
+
+/// Create MEV search system optimized for server hardware
+pub fn create_mev_search_system() -> (MevSearchSystem, mpsc::Receiver<MevOpportunity>) {
+    // Determine optimal worker count based on CPU cores
+    let num_cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    
+    // Use 80% of cores for MEV search, leave some for node operations
+    let num_workers = (num_cores * 8 / 10).max(4);
+    
+    println!("🚀 Creating MEV search system with {} workers on {} cores", num_workers, num_cores);
+    
+    MevSearchSystem::new(num_workers)
+}
+
+// TODO: Real MEV strategies to implement:
+// 1. DEX Arbitrage - Monitor price differences across Uniswap, SushiSwap, Curve, Balancer
+// 2. Liquidations - Track undercollateralized positions on Aave, Compound, MakerDAO
+// 3. Sandwich - Detect large swaps and wrap with front/back transactions
+// 4. JIT Liquidity - Provide liquidity just before large trades, remove after
+// 5. NFT Arbitrage - Find mispriced NFTs across OpenSea, Blur, LooksRare
+// 6. Cross-chain Arbitrage - Price differences between Base and Ethereum
+// 7. Backrun Oracle Updates - Trade after Chainlink price updates

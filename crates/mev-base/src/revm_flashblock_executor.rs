@@ -16,6 +16,7 @@ use revm::{
 use op_revm::OpTransaction;
 use std::sync::Arc;
 use crate::flashblocks::FlashblocksEvent;
+use crate::flashblock_state::FlashblockStateSnapshot;
 
 /// A flashblock executor that uses revm directly with CacheDB for optimal performance
 pub struct RevmFlashblockExecutor {
@@ -28,6 +29,10 @@ pub struct RevmFlashblockExecutor {
     cache_db: Option<CacheDB<StateProviderDatabase<Box<dyn StateProvider>>>>,
     /// The current EVM environment
     evm_env: Option<reth_evm::EvmEnv<op_revm::OpSpecId>>,
+    /// Current block number being processed
+    current_block: Option<u64>,
+    /// Base fee for current block
+    current_base_fee: u128,
 }
 
 impl RevmFlashblockExecutor {
@@ -43,6 +48,8 @@ impl RevmFlashblockExecutor {
             evm_config,
             cache_db: None,
             evm_env: None,
+            current_block: None,
+            current_base_fee: 0,
         }
     }
     
@@ -106,6 +113,11 @@ impl RevmFlashblockExecutor {
         
         let base_fee_wei = evm_header.base_fee_per_gas.unwrap_or(0);
         let base_fee_gwei = base_fee_wei as f64 / 1_000_000_000.0;
+        
+        // Store current block info
+        self.current_block = Some(block_number);
+        self.current_base_fee = base_fee_wei as u128;
+        
         println!("✅ Initialized revm executor for block {} (base fee: {} wei = {:.4} gwei)", 
             block_number, 
             base_fee_wei,
@@ -140,8 +152,7 @@ impl RevmFlashblockExecutor {
         let mut results = Vec::new();
         
         // Process each transaction in the flashblock
-        for (i, (tx_env, tx_hash)) in converted_txs.into_iter().enumerate() {
-            println!("   ├─ Transaction {}/{}: {}", i + 1, event.transactions.len(), tx_hash);
+        for (i, (tx_env, _tx_hash)) in converted_txs.into_iter().enumerate() {
             
             // Get the original transaction envelope bytes
             let tx_envelope = &event.transactions[i];
@@ -206,17 +217,14 @@ impl RevmFlashblockExecutor {
                     gas_used: None,
                 },
             };
-            
-            if let Some(ref error) = response.error {
-                println!("      ❌ Failed: {}", error);
-            } else if let Some(gas) = response.gas_used {
-                println!("      ✅ Success: gas used {} ({}k)", gas, gas / 1000);
-            }
-            
             results.push(response);
         }
         
         let elapsed = start.elapsed();
+        let successful = results.iter().filter(|r| r.error.is_none()).count();
+        let failed = results.len() - successful;
+        
+        println!("   ├─ Results: {}/{} successful, {} failed", successful, results.len(), failed);
         println!("   └─ Flashblock executed in {:.2}ms ({:.2}ms per tx avg)", 
             elapsed.as_secs_f64() * 1000.0,
             (elapsed.as_secs_f64() * 1000.0) / event.transactions.len() as f64
@@ -480,6 +488,43 @@ impl RevmFlashblockExecutor {
             .map(BundleTransaction::Signed)
             .collect();
         self.simulate_bundle_mixed(mixed_bundle, block_number).await
+    }
+    
+    /// Export current state as a snapshot for MEV searchers
+    pub fn export_state_snapshot(&self, flashblock_index: u32, transactions: Vec<alloy_consensus::TxEnvelope>) -> eyre::Result<FlashblockStateSnapshot> {
+        let cache_db = self.cache_db.as_ref()
+            .ok_or_else(|| eyre::eyre!("Executor not initialized"))?;
+        
+        let block_number = self.current_block
+            .ok_or_else(|| eyre::eyre!("No block number set"))?;
+            
+        let mut snapshot = FlashblockStateSnapshot::new(
+            block_number,
+            flashblock_index,
+            self.current_base_fee,
+        );
+        
+        // Include transactions for calldata analysis
+        snapshot.transactions = transactions;
+        
+        // Export account changes from CacheDB
+        // Access the cache through the public field
+        for (address, db_account) in &cache_db.cache.accounts {
+            // Convert DbAccount to AccountInfo for the snapshot
+            snapshot.add_account_change(*address, db_account.info.clone());
+            
+            // Add storage changes for this account
+            for (storage_key, storage_value) in &db_account.storage {
+                snapshot.add_storage_change(*address, *storage_key, *storage_value);
+            }
+        }
+        
+        // Also export any new contract code
+        for (code_hash, bytecode) in &cache_db.cache.contracts {
+            snapshot.add_code_change(*code_hash, bytecode.clone());
+        }
+        
+        Ok(snapshot)
     }
 }
 
