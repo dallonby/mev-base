@@ -13,6 +13,7 @@ use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_node_api::FullNodeComponents;
 
 use std::sync::Arc;
+use tracing::{info, debug, error, warn, trace};
 
 mod benchmark_worker;
 mod lifecycle_timing;
@@ -27,13 +28,14 @@ mod gradient_descent;
 mod gradient_descent_parallel;
 mod gradient_descent_fast;
 mod backrun_analyzer;
+mod logging;
 
 /// Block subscriber ExEx that echoes block numbers
 async fn block_subscriber_exex<Node: FullNodeComponents>(
     mut ctx: ExExContext<Node>,
 ) -> eyre::Result<()> 
 {
-    println!("Block subscriber ExEx started!");
+    info!("Block subscriber ExEx started!");
     
     // Access the provider for RPC-like operations
     let provider = ctx.provider().clone();
@@ -45,25 +47,26 @@ async fn block_subscriber_exex<Node: FullNodeComponents>(
                 // New blocks committed to the canonical chain
                 let tip = new.tip();
                 let range = new.range();
-                println!("🔷 New blocks committed: {} -> {} ({}) [{} blocks]", 
-                    range.start(), 
-                    range.end(), 
-                    tip.hash(),
-                    range.clone().count()
+                info!(
+                    start_block = %range.start(),
+                    end_block = %range.end(),
+                    tip_hash = %tip.hash(),
+                    block_count = range.clone().count(),
+                    "New blocks committed to chain"
                 );
                 
                 // Example: Access additional block data via provider
                 if let Ok(receipts) = provider.receipts_by_block(tip.hash().into()) {
                     if let Some(receipts) = receipts {
-                        println!("   └─ Transactions in last block: {}", receipts.len());
+                        debug!(tx_count = receipts.len(), "Transactions in last block");
                     }
                 }
             }
             ExExNotification::ChainReorged { old, new } => {
-                println!("⚠️  Chain reorg: {:?} -> {:?}", old.range(), new.range());
+                warn!(old_range = ?old.range(), new_range = ?new.range(), "Chain reorg detected");
             }
             ExExNotification::ChainReverted { old } => {
-                println!("⏪ Chain reverted: {:?}", old.range());
+                warn!(range = ?old.range(), "Chain reverted");
             }
         }
 
@@ -72,7 +75,7 @@ async fn block_subscriber_exex<Node: FullNodeComponents>(
         if let Some(committed_chain) = notification.committed_chain() {
             // log a message here
             let num_hash = committed_chain.tip().num_hash();
-            println!("✅ Processed up to height: #{} ({})", num_hash.number, num_hash.hash);
+            debug!(height = num_hash.number, hash = %num_hash.hash, "Processed up to height");
             ctx.events.send(ExExEvent::FinishedHeight(num_hash))?;
         }
     }
@@ -81,6 +84,9 @@ async fn block_subscriber_exex<Node: FullNodeComponents>(
 }
 
 fn main() -> eyre::Result<()> {
+    // Initialize logging before anything else
+    logging::init_logging();
+    
     Cli::parse_args().run(|builder, rollup_args| async move {
         let node = OpNode::new(rollup_args.clone());
         let handle = builder
@@ -88,11 +94,11 @@ fn main() -> eyre::Result<()> {
             .with_components(node.components())
             .with_add_ons(OpAddOns::default())
             .on_node_started(|_full_node| {
-                println!("Node started successfully!");
+                info!("Node started successfully!");
                 Ok(())
             })
             .on_rpc_started(|_ctx, _handles| {
-                println!("RPC server started!");
+                info!("RPC server started!");
                 Ok(())
             })
             // ExEx disabled - not currently used
@@ -118,7 +124,7 @@ fn main() -> eyre::Result<()> {
         // Start the flashblocks connection
         flashblocks_client.start().await?;
         
-        println!("🔌 Flashblocks client connected to wss://mainnet.flashblocks.base.org/ws");
+        info!("Flashblocks client connected to wss://mainnet.flashblocks.base.org/ws");
         
         
         // Create a channel for flashblock processing queue
@@ -127,16 +133,18 @@ fn main() -> eyre::Result<()> {
         // Spawn task to receive flashblocks and queue them
         tokio::spawn(async move {
             while let Ok(event) = flashblocks_receiver.recv().await {
-                println!("\n📦 Flashblocks Event:");
-                println!("   ├─ Block: {}", event.block_number);
-                println!("   ├─ Index: {}", event.index);
-                println!("   ├─ Transactions: {}", event.transactions.len());
-                println!("   ├─ State Root: {}", event.state_root);
-                println!("   └─ Receipts Root: {}", event.receipts_root);
+                info!(
+                    block = event.block_number,
+                    flashblock = event.index,
+                    tx_count = event.transactions.len(),
+                    state_root = %event.state_root,
+                    receipts_root = %event.receipts_root,
+                    "Flashblocks event received"
+                );
                 
                 // Queue the event for processing
                 if let Err(e) = flashblock_tx.send(event).await {
-                    println!("❌ Failed to queue flashblock: {}", e);
+                    error!(error = %e, "Failed to queue flashblock");
                 }
             }
         });
@@ -156,16 +164,19 @@ fn main() -> eyre::Result<()> {
             let min_profit_threshold = alloy_primitives::U256::from(10_000_000_000_000u64); // 0.00001 ETH (10 microether)
             
             while let Some(opportunity) = mev_result_rx.recv().await {
-                println!("💰 MEV Opportunity Found!");
-                println!("   ├─ Strategy: {}", opportunity.strategy);
-                println!("   ├─ Block: {} Flashblock: {}", opportunity.block_number, opportunity.flashblock_index);
-                println!("   ├─ Expected Profit: {} wei", opportunity.expected_profit);
-                println!("   └─ Bundle size: {} txs", opportunity.bundle.transactions.len());
+                info!(
+                    strategy = %opportunity.strategy,
+                    block = opportunity.block_number,
+                    flashblock = opportunity.flashblock_index,
+                    profit_wei = %opportunity.expected_profit,
+                    bundle_size = opportunity.bundle.transactions.len(),
+                    "MEV opportunity found"
+                );
                 
                 // Log to JSON if profit exceeds threshold
                 if opportunity.expected_profit > min_profit_threshold {
                     if let Err(e) = log_mev_opportunity_to_json(&opportunity) {
-                        println!("   ❌ Failed to log MEV opportunity to JSON: {:?}", e);
+                        error!(error = ?e, "Failed to log MEV opportunity to JSON");
                     }
                 }
                 
@@ -175,7 +186,7 @@ fn main() -> eyre::Result<()> {
         
         // Spawn dedicated synchronous flashblock simulator thread
         tokio::spawn(async move {
-            println!("🚀 Starting dedicated flashblock simulator thread");
+            info!("Starting dedicated flashblock simulator thread");
             
             // Create revm executor with the node's provider
             let chain_spec = BASE_MAINNET.clone();
@@ -198,26 +209,29 @@ fn main() -> eyre::Result<()> {
                 let timing_for_workers = Arc::new(tokio::sync::Mutex::new(Some(timing.clone())));
                 *timing_tracker.lock().await = Some(timing.clone());
                 
-                println!("\n🔄 Processing flashblock {} for block {} in simulator thread", 
-                    event.index, event.block_number);
+                info!(
+                    block = event.block_number,
+                    flashblock = event.index,
+                    "Processing flashblock in simulator thread"
+                );
                 
                 // Use revm-based executor
-                println!("   🔧 Using revm-based executor");
+                debug!("Using revm-based executor");
                 
                 // Re-initialize for new block if needed
                 if !revm_initialized || event.block_number != current_block {
                     if event.block_number != current_block {
-                        println!("   🔄 New block detected: {} -> {}", current_block, event.block_number);
+                        debug!(old_block = current_block, new_block = event.block_number, "New block detected");
                         current_block = event.block_number;
                     }
                     
                     match revm_executor.initialize(blockchain_provider_for_task.clone(), BlockId::latest()).await {
                         Ok(_) => {
-                            println!("   ✅ Revm executor initialized with node provider");
+                            debug!("Revm executor initialized with node provider");
                             revm_initialized = true;
                         }
                         Err(e) => {
-                            println!("   ❌ Failed to initialize revm executor: {:?}", e);
+                            error!(error = ?e, "Failed to initialize revm executor");
                             continue;
                         }
                     }
@@ -227,7 +241,11 @@ fn main() -> eyre::Result<()> {
                 match revm_executor.execute_flashblock(&event, event.index).await {
                     Ok(results) => {
                         let successful = results.iter().filter(|r| r.error.is_none()).count();
-                        println!("   📊 Revm execution complete: {}/{} successful", successful, results.len());
+                        info!(
+                            successful = successful,
+                            total = results.len(),
+                            "Revm execution complete"
+                        );
                         
                         // Update timing
                         timing.execution_completed = Some(std::time::Instant::now());
@@ -237,8 +255,11 @@ fn main() -> eyre::Result<()> {
                         match revm_executor.export_state_snapshot(event.index, event.transactions.clone()) {
                             Ok(state_snapshot) => {
                                 let export_time = export_start.elapsed().as_secs_f64() * 1000.0;
-                                println!("   📸 State snapshot exported with {} accounts in {:.2}ms", 
-                                    state_snapshot.account_changes.len(), export_time);
+                                debug!(
+                                    accounts = state_snapshot.account_changes.len(),
+                                    time_ms = export_time,
+                                    "State snapshot exported"
+                                );
                                 
                                 // Update timing
                                 timing.state_export_completed = Some(std::time::Instant::now());
@@ -248,7 +269,11 @@ fn main() -> eyre::Result<()> {
                                 timing.strategy_analysis_completed = Some(std::time::Instant::now());
                                 
                                 if !strategies.is_empty() {
-                                    println!("   🎯 Triggering {} MEV strategies: {:?}", strategies.len(), strategies);
+                                    info!(
+                                        count = strategies.len(),
+                                        strategies = ?strategies,
+                                        "Triggering MEV strategies"
+                                    );
                                     
                                     // Spawn all MEV tasks in batch for reduced overhead
                                     mev_task_worker::spawn_mev_tasks_batch(
@@ -262,12 +287,12 @@ fn main() -> eyre::Result<()> {
                                     );
                                     timing.workers_spawned = Some(std::time::Instant::now());
                                 } else {
-                                    println!("   ⏭️  No MEV strategies triggered for this flashblock");
+                                    debug!("No MEV strategies triggered for this flashblock");
                                 }
                                 
                                 // Run benchmark on the 3rd flashblock of each block
                                 if event.index == 2 && current_block > 0 {
-                                    println!("\n   🏃 Running worker overhead benchmark...");
+                                    debug!("Running worker overhead benchmark");
                                     let bench_provider = blockchain_provider_for_task.clone();
                                     let bench_spec = chain_spec.clone();
                                     let bench_snapshot = state_snapshot.clone();
@@ -279,20 +304,20 @@ fn main() -> eyre::Result<()> {
                                             bench_snapshot,
                                             10, // Run 10 iterations
                                         ).await {
-                                            println!("   ❌ Benchmark failed: {:?}", e);
+                                            error!(error = ?e, "Benchmark failed");
                                         }
                                     });
                                 }
                             }
                             Err(e) => {
-                                println!("   ❌ Failed to export state snapshot: {:?}", e);
+                                error!(error = ?e, "Failed to export state snapshot");
                             }
                         }
                         
                         // Example: Simulate an MEV bundle on top of the current flashblock state
                         // This demonstrates how to test MEV opportunities after flashblock execution
                         if event.index == 10 && !event.transactions.is_empty() {
-                            println!("\n   🎲 Testing MEV bundle simulation on final flashblock");
+                            debug!("Testing MEV bundle simulation on final flashblock");
                             
                             // Create a test bundle with one of the existing transactions
                             // In real usage, this would be your MEV transactions
@@ -300,29 +325,32 @@ fn main() -> eyre::Result<()> {
                             
                             match revm_executor.simulate_bundle(test_bundle, event.block_number).await {
                                 Ok(_bundle_results) => {
-                                    println!("   ✅ MEV bundle simulation completed");
+                                    debug!("MEV bundle simulation completed");
                                 }
                                 Err(e) => {
-                                    println!("   ❌ MEV bundle simulation failed: {:?}", e);
+                                    error!(error = ?e, "MEV bundle simulation failed");
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        println!("   ❌ Revm execution failed: {:?}", e);
+                        error!(error = ?e, "Revm execution failed");
                     }
                 }
                 
-                println!("🏁 Flashblock {} processing completed in {:.2}ms total", 
-                    event.index, 
-                    sim_start.elapsed().as_secs_f64() * 1000.0
+                let total_time = sim_start.elapsed().as_secs_f64() * 1000.0;
+                info!(
+                    block = event.block_number,
+                    flashblock = event.index,
+                    time_ms = total_time,
+                    "Flashblock processing completed"
                 );
                 
                 // Update timing tracker with final timing
                 *timing_tracker.lock().await = Some(timing);
             }
             
-            println!("⚠️  Flashblock simulator thread exiting");
+            warn!("Flashblock simulator thread exiting");
         });
         
         // // Spawn a task to simulate calls every 2 seconds
@@ -354,7 +382,7 @@ fn main() -> eyre::Result<()> {
         //             None,               // no base fee override
         //             None,               // no timestamp override
         //         ).await {
-        //             println!("❌ Simulation batch failed: {:?}", e);
+        //             error!(error = ?e, "Simulation batch failed");
         //         }
         //     }
         // });

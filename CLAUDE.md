@@ -13,6 +13,18 @@
 
 ## Recent Updates (Latest: 2025-08-01)
 
+### Logging System
+- Implemented structured logging using `tracing` crate
+- Configurable verbosity via environment variables:
+  - `MEV_LOG`: Primary configuration (e.g., "debug", "info", "warn", "error", "trace")
+  - `RUST_LOG`: Fallback if MEV_LOG not set
+- Features:
+  - Structured fields for block numbers, flashblock indices, profits, etc.
+  - Module-specific filtering (e.g., `MEV_LOG=info,mevbase::mev_task_worker=debug`)
+  - Compact output format with timestamps and log levels
+  - Supports .env file configuration
+- Usage: Set `MEV_LOG=debug` for detailed execution logs
+
 ### MEV Profit Threshold & Logging
 - Minimum profit threshold updated to 0.00001 ETH (10 microether)
   - Accounts for Base mainnet's ultra-low gas costs (0.01 gwei)
