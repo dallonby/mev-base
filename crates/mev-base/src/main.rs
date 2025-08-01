@@ -12,12 +12,21 @@ use futures::TryStreamExt;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_node_api::FullNodeComponents;
 
+use std::sync::Arc;
+
+mod benchmark_worker;
+mod lifecycle_timing;
 mod flashblocks;
 mod flashblock_state;
 mod mev_bundle_types;
 mod mev_search_worker;
 mod mev_simulation;
+mod mev_task_worker;
 mod revm_flashblock_executor;
+mod gradient_descent;
+mod gradient_descent_parallel;
+mod gradient_descent_fast;
+mod backrun_analyzer;
 
 /// Block subscriber ExEx that echoes block numbers
 async fn block_subscriber_exex<Node: FullNodeComponents>(
@@ -86,9 +95,10 @@ fn main() -> eyre::Result<()> {
                 println!("RPC server started!");
                 Ok(())
             })
-            .install_exex("block-echo", move |ctx| {
-                async move { Ok(block_subscriber_exex(ctx)) }
-            })
+            // ExEx disabled - not currently used
+            // .install_exex("block-echo", move |ctx| {
+            //     async move { Ok(block_subscriber_exex(ctx)) }
+            // })
             .launch()
             .await?;
 
@@ -134,8 +144,11 @@ fn main() -> eyre::Result<()> {
         // Clone provider for the spawned task
         let blockchain_provider_for_task = blockchain_provider.clone();
         
-        // Create work-stealing MEV search system
-        let (mev_system, mut mev_result_rx) = mev_search_worker::create_mev_search_system();
+        // Create channel for MEV results
+        let (mev_result_tx, mut mev_result_rx) = tokio::sync::mpsc::channel::<mev_search_worker::MevOpportunity>(1000);
+        
+        // Create timing tracker
+        let timing_tracker = lifecycle_timing::create_timing_tracker();
         
         // Spawn MEV opportunity handler
         tokio::spawn(async move {
@@ -156,12 +169,25 @@ fn main() -> eyre::Result<()> {
             
             // Create revm executor with the node's provider
             let chain_spec = BASE_MAINNET.clone();
-            let mut revm_executor = revm_flashblock_executor::RevmFlashblockExecutor::new(chain_spec);
+            let mut revm_executor = revm_flashblock_executor::RevmFlashblockExecutor::new(chain_spec.clone());
             let mut revm_initialized = false;
             let mut current_block = 0u64;
             
             while let Some(event) = flashblock_rx.recv().await {
                 let sim_start = std::time::Instant::now();
+                
+                // Create lifecycle timing for this flashblock
+                let mut timing = lifecycle_timing::LifecycleTiming::new(
+                    event.received_at,
+                    event.block_number,
+                    event.index,
+                );
+                timing.processing_started = Some(sim_start);
+                
+                // Clone for workers
+                let timing_for_workers = Arc::new(tokio::sync::Mutex::new(Some(timing.clone())));
+                *timing_tracker.lock().await = Some(timing.clone());
+                
                 println!("\n🔄 Processing flashblock {} for block {} in simulator thread", 
                     event.index, event.block_number);
                 
@@ -193,6 +219,9 @@ fn main() -> eyre::Result<()> {
                         let successful = results.iter().filter(|r| r.error.is_none()).count();
                         println!("   📊 Revm execution complete: {}/{} successful", successful, results.len());
                         
+                        // Update timing
+                        timing.execution_completed = Some(std::time::Instant::now());
+                        
                         // Export state snapshot and trigger MEV search
                         let export_start = std::time::Instant::now();
                         match revm_executor.export_state_snapshot(event.index, event.transactions.clone()) {
@@ -201,25 +230,50 @@ fn main() -> eyre::Result<()> {
                                 println!("   📸 State snapshot exported with {} accounts in {:.2}ms", 
                                     state_snapshot.account_changes.len(), export_time);
                                 
+                                // Update timing
+                                timing.state_export_completed = Some(std::time::Instant::now());
+                                
                                 // Analyze state to determine which strategies to trigger
                                 let strategies = mev_search_worker::analyze_state_for_strategies(&state_snapshot);
+                                timing.strategy_analysis_completed = Some(std::time::Instant::now());
                                 
                                 if !strategies.is_empty() {
                                     println!("   🎯 Triggering {} MEV strategies: {:?}", strategies.len(), strategies);
                                     
-                                    // Create a task for each relevant strategy
+                                    // Spawn short-lived MEV tasks for each strategy
                                     for strategy in strategies {
-                                        let mev_task = mev_search_worker::MevSearchTask {
-                                            state: state_snapshot.clone(),
+                                        mev_task_worker::spawn_mev_task(
+                                            chain_spec.clone(),
+                                            blockchain_provider_for_task.clone(),
                                             strategy,
-                                            flashblock_received_at: event.received_at,
-                                        };
-                                        
-                                        // Submit to work-stealing queue
-                                        mev_system.submit_task(mev_task);
+                                            state_snapshot.clone(),
+                                            event.received_at,
+                                            mev_result_tx.clone(),
+                                            Some(timing_for_workers.clone()),
+                                        );
                                     }
+                                    timing.workers_spawned = Some(std::time::Instant::now());
                                 } else {
                                     println!("   ⏭️  No MEV strategies triggered for this flashblock");
+                                }
+                                
+                                // Run benchmark on the 3rd flashblock of each block
+                                if event.index == 2 && current_block > 0 {
+                                    println!("\n   🏃 Running worker overhead benchmark...");
+                                    let bench_provider = blockchain_provider_for_task.clone();
+                                    let bench_spec = chain_spec.clone();
+                                    let bench_snapshot = state_snapshot.clone();
+                                    
+                                    tokio::spawn(async move {
+                                        if let Err(e) = benchmark_worker::benchmark_worker_overhead(
+                                            bench_spec,
+                                            bench_provider,
+                                            bench_snapshot,
+                                            10, // Run 10 iterations
+                                        ).await {
+                                            println!("   ❌ Benchmark failed: {:?}", e);
+                                        }
+                                    });
                                 }
                             }
                             Err(e) => {
@@ -255,6 +309,9 @@ fn main() -> eyre::Result<()> {
                     event.index, 
                     sim_start.elapsed().as_secs_f64() * 1000.0
                 );
+                
+                // Update timing tracker with final timing
+                *timing_tracker.lock().await = Some(timing);
             }
             
             println!("⚠️  Flashblock simulator thread exiting");

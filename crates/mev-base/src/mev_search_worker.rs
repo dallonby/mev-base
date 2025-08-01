@@ -14,7 +14,7 @@ pub enum MevStrategy {
     Liquidation,
     Sandwich,
     JitLiquidity,
-    // Add more strategies here
+    Backrun,
 }
 
 /// Message to MEV search workers
@@ -152,6 +152,7 @@ async fn mev_search_worker_steal(
                     MevStrategy::Liquidation => "liquidation",
                     MevStrategy::Sandwich => "sandwich",
                     MevStrategy::JitLiquidity => "JIT liquidity",
+                    MevStrategy::Backrun => "backrun",
                 },
                 state.block_number,
                 state.flashblock_index,
@@ -171,6 +172,10 @@ async fn mev_search_worker_steal(
                 }
                 MevStrategy::JitLiquidity => {
                     search_jit_liquidity(worker_id, state, &result_tx).await;
+                }
+                MevStrategy::Backrun => {
+                    // Backrun handled by task workers with CacheDB
+                    println!("   🏃 Backrun strategy should use task workers");
                 }
             }
         } else {
@@ -345,7 +350,17 @@ mod base_addresses {
 /// Analyze state changes to determine which MEV strategies to trigger
 pub fn analyze_state_for_strategies(state: &FlashblockStateSnapshot) -> Vec<MevStrategy> {
     use std::collections::HashSet;
+    use crate::backrun_analyzer::BackrunAnalyzer;
+    
     let mut strategies = HashSet::new();
+    
+    // Check for backrun opportunities using BackrunAnalyzer
+    let backrun_analyzer = BackrunAnalyzer::new(U256::from(1_000_000_000_000_000u64)); // 0.001 ETH min profit
+    let triggered_configs = backrun_analyzer.analyze_state_for_backrun(state);
+    if !triggered_configs.is_empty() {
+        println!("   🎯 Backrun analyzer triggered {} configs: {:?}", triggered_configs.len(), triggered_configs);
+        strategies.insert(MevStrategy::Backrun);
+    }
     
     // Analyze actual state changes
     for (address, _account_info) in &state.account_changes {
