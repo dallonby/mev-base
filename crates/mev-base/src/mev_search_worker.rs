@@ -36,6 +36,8 @@ pub struct MevOpportunity {
     pub expected_profit: U256,
     /// Strategy that found this
     pub strategy: String,
+    /// Gas used from simulation (if available)
+    pub simulated_gas_used: Option<u64>,
 }
 
 /// Work-stealing MEV search system optimized for high core counts

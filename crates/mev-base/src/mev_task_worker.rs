@@ -281,18 +281,46 @@ impl MevTaskWorker {
                                 "Found profitable backrun"
                             );
                             
-                            // Create MEV bundle
+                            // Bot address for MEV execution
+                            let bot_address = alloy_primitives::Address::from([0xc0, 0xff, 0xee, 0x48, 0x94, 0x5a, 0x95, 0x18, 
+                                                                               0xb0, 0xb5, 0x43, 0xa2, 0xc5, 0x9d, 0xfb, 0x10, 
+                                                                               0x22, 0x21, 0xfb, 0xb7]);
+                            
+                            // First, simulate the transaction with value=0 to get gas usage
+                            debug!("Simulating transaction to determine gas usage");
+                            
+                            let gas_used = match self.simulate_transaction(
+                                cache_db,
+                                evm_config,
+                                bot_address,
+                                config.contract_address,
+                                result.calldata_used.clone(),
+                                alloy_primitives::U256::from(0), // Zero value for gas estimation
+                            ) {
+                                Ok(gas) => gas,
+                                Err(e) => {
+                                    warn!(error = ?e, "Failed to simulate transaction, using default gas");
+                                    200_000 // Default fallback
+                                }
+                            };
+                            
+                            // Calculate bribe value based on actual gas used
+                            let bribe_value = self.encode_transaction_value(gas_used, 500);
+                            debug!(
+                                gas_used = gas_used,
+                                bribe_value = %bribe_value,
+                                "Calculated bribe value from gas simulation"
+                            );
+                            
+                            // Create MEV bundle with calculated bribe value
                             let bundle = crate::mev_bundle_types::MevBundle::new(
                                 vec![crate::mev_bundle_types::BundleTransaction::unsigned(
-                                    // Use a dummy from address for now
-                                    alloy_primitives::Address::from([0xc0, 0xff, 0xee, 0x48, 0x94, 0x5a, 0x95, 0x18, 
-                                                                     0xb0, 0xb5, 0x43, 0xa2, 0xc5, 0x9d, 0xfb, 0x10, 
-                                                                     0x22, 0x21, 0xfb, 0xb7]),
+                                    bot_address,
                                     Some(config.contract_address),
-                                    self.encode_transaction_value(result.gas_used, 500), // 5% bribe
+                                    bribe_value, // Use calculated bribe value
                                     result.calldata_used,
                                     4_000_000, // gas limit
-                                    alloy_primitives::U256::from(self.state_snapshot.base_fee + 1_000_000_000),
+                                    alloy_primitives::U256::from(self.state_snapshot.base_fee + 100_000),
                                     0, // nonce
                                 )],
                                 self.state_snapshot.block_number,
@@ -304,6 +332,7 @@ impl MevTaskWorker {
                                 bundle,
                                 expected_profit: alloy_primitives::U256::from(result.delta as u128),
                                 strategy: format!("Backrun_{}", config_name),
+                                simulated_gas_used: Some(gas_used),
                             }));
                         } else {
                             debug!("No profitable backrun found");
@@ -322,6 +351,118 @@ impl MevTaskWorker {
     fn encode_transaction_value(&self, gas_cost: u64, bribe_rate: u16) -> alloy_primitives::U256 {
         let encoded = ((gas_cost / 10) << 16) | bribe_rate as u64;
         alloy_primitives::U256::from(encoded)
+    }
+    
+    /// Simulate a transaction to get gas usage
+    fn simulate_transaction<DB>(
+        &self,
+        cache_db: &mut CacheDB<DB>,
+        evm_config: &OpEvmConfig<OpChainSpec, OpPrimitives>,
+        from: alloy_primitives::Address,
+        to: alloy_primitives::Address,
+        calldata: alloy_primitives::Bytes,
+        value: alloy_primitives::U256,
+    ) -> eyre::Result<u64>
+    where
+        DB: revm::Database + revm::DatabaseRef + std::fmt::Debug,
+        <DB as revm::DatabaseRef>::Error: Send + Sync + 'static,
+    {
+        // Fund the sender account if needed
+        let sender_info = match cache_db.basic(from)? {
+            Some(info) if info.balance >= value => info,
+            _ => {
+                // Need to fund the account
+                let account_info = revm::state::AccountInfo {
+                    balance: alloy_primitives::U256::from(1_000_000_000_000_000_000u64), // 1 ETH
+                    nonce: 0,
+                    code_hash: alloy_primitives::KECCAK256_EMPTY,
+                    code: None,
+                };
+                
+                cache_db.cache.accounts.insert(from, DbAccount {
+                    info: account_info.clone(),
+                    account_state: AccountState::Touched,
+                    storage: Default::default(),
+                });
+                
+                account_info
+            }
+        };
+        
+        // Create dummy signature for simulation
+        let signature = alloy_primitives::Signature::new(
+            alloy_primitives::U256::from(1),
+            alloy_primitives::U256::from(1), 
+            false
+        );
+        
+        // Set up transaction environment
+        let mut tx_env = revm::context::TxEnv::default();
+        tx_env.caller = from;
+        tx_env.nonce = sender_info.nonce;
+        tx_env.kind = revm::primitives::TxKind::Call(to);
+        tx_env.data = calldata.clone();
+        tx_env.gas_limit = 4_000_000;
+        tx_env.gas_price = (self.state_snapshot.base_fee + 100_000) as u128;
+        tx_env.gas_priority_fee = Some(100_000u128);
+        tx_env.value = value;
+        
+        // Create transaction for Optimism
+        let tx_eip1559 = alloy_consensus::TxEip1559 {
+            chain_id: 8453, // Base mainnet
+            nonce: sender_info.nonce,
+            gas_limit: 4_000_000,
+            max_fee_per_gas: self.state_snapshot.base_fee as u128 + 100_000,
+            max_priority_fee_per_gas: 100_000,
+            to: alloy_primitives::TxKind::Call(to),
+            value,
+            access_list: Default::default(),
+            input: calldata,
+        };
+        
+        let signed_tx = alloy_consensus::Signed::new_unchecked(tx_eip1559, signature, Default::default());
+        let tx_envelope = alloy_consensus::TxEnvelope::Eip1559(signed_tx);
+        let enveloped_bytes = alloy_eips::eip2718::Encodable2718::encoded_2718(&tx_envelope);
+        
+        let mut op_tx = op_revm::OpTransaction::new(tx_env);
+        op_tx.enveloped_tx = Some(enveloped_bytes.into());
+        
+        // Use MEV-friendly EVM environment
+        let current_timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        
+        let evm_env = evm_config.evm_env(&alloy_consensus::Header {
+            base_fee_per_gas: Some(0), // Zero base fee for MEV simulation
+            gas_limit: 2_000_000_000,
+            number: 33_634_688,
+            timestamp: current_timestamp,
+            ..Default::default()
+        });
+        
+        // Create EVM for simulation
+        let mut evm = evm_config.evm_with_env(&mut *cache_db, evm_env);
+        
+        // Execute and extract gas used
+        use reth_evm::Evm;
+        match evm.transact(op_tx) {
+            Ok(result) => {
+                let gas = result.result.gas_used();
+                trace!(
+                    from = %from,
+                    to = %to,
+                    value = %value,
+                    gas_used = gas,
+                    "Transaction simulation complete"
+                );
+                Ok(gas)
+            }
+            Err(e) => {
+                debug!(error = ?e, "Transaction simulation failed");
+                Err(e.into())
+            }
+        }
     }
 }
 

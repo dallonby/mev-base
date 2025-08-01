@@ -4,7 +4,7 @@ use reth_optimism_node::{
     OpNode,
 };
 use reth_optimism_cli::Cli;
-use reth_provider::ReceiptProvider;
+use reth_provider::{ReceiptProvider, StateProviderFactory};
 use reth_optimism_chainspec::BASE_MAINNET;
 use alloy_rpc_types_eth::BlockId;
 
@@ -13,7 +13,10 @@ use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_node_api::FullNodeComponents;
 
 use std::sync::Arc;
-use tracing::{info, debug, error, warn, trace};
+use tracing::{info, debug, error, warn};
+use crate::transaction_service::{TransactionService, TransactionServiceConfig, WalletStrategy};
+use crate::wallet_service::WalletService;
+use crate::sequencer_service::SequencerService;
 
 mod benchmark_worker;
 mod lifecycle_timing;
@@ -29,6 +32,9 @@ mod gradient_descent_parallel;
 mod gradient_descent_fast;
 mod backrun_analyzer;
 mod logging;
+mod transaction_service;
+mod wallet_service;
+mod sequencer_service;
 
 /// Block subscriber ExEx that echoes block numbers
 async fn block_subscriber_exex<Node: FullNodeComponents>(
@@ -158,10 +164,88 @@ fn main() -> eyre::Result<()> {
         // Create timing tracker
         let timing_tracker = lifecycle_timing::create_timing_tracker();
         
+        // Initialize transaction services
+        let wallet_service = match WalletService::from_env() {
+            Ok(service) => {
+                info!("Wallet service initialized with {} wallets", service.wallet_count());
+                Arc::new(service)
+            }
+            Err(e) => {
+                warn!("Failed to initialize wallet service: {}. Transaction submission disabled.", e);
+                // Create empty wallet service
+                Arc::new(WalletService::new(vec![]).unwrap())
+            }
+        };
+        
+        let sequencer_service = match SequencerService::from_env() {
+            Ok(service) => {
+                info!("Sequencer service initialized");
+                Arc::new(service)
+            }
+            Err(e) => {
+                error!("Failed to initialize sequencer service: {}", e);
+                return Err(e.into());
+            }
+        };
+        
+        // Load transaction service config from env
+        let tx_config = TransactionServiceConfig {
+            enabled: std::env::var("BLOCK_TX_ENABLED")
+                .unwrap_or_else(|_| "true".to_string())
+                .parse::<bool>()
+                .unwrap_or(true),
+            dry_run: std::env::var("BLOCK_TX_DRY_RUN")
+                .unwrap_or_else(|_| "false".to_string())
+                .parse::<bool>()
+                .unwrap_or(false),
+            chain_id: 8453, // Base mainnet
+            default_gas_limit: std::env::var("BLOCK_TX_DEFAULT_GAS_LIMIT")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok()),
+            gas_multiplier: std::env::var("BLOCK_TX_GAS_MULTIPLIER")
+                .unwrap_or_else(|_| "1.2".to_string())
+                .parse::<f64>()
+                .unwrap_or(1.2),
+            wallet_strategy: match std::env::var("BLOCK_TX_WALLET_STRATEGY")
+                .unwrap_or_else(|_| "default".to_string())
+                .to_lowercase()
+                .as_str() {
+                "random" => WalletStrategy::Random,
+                "round-robin" => WalletStrategy::RoundRobin,
+                _ => WalletStrategy::Default,
+            },
+        };
+        
+        let transaction_service = Arc::new(TransactionService::new(
+            tx_config.clone(),
+            wallet_service.clone(),
+            sequencer_service.clone(),
+        ));
+        
+        info!(
+            enabled = tx_config.enabled,
+            dry_run = tx_config.dry_run,
+            wallet_strategy = ?tx_config.wallet_strategy,
+            "Transaction service initialized"
+        );
+        
+        // Clone provider for MEV handler
+        let mev_provider = blockchain_provider.clone();
+        
         // Spawn MEV opportunity handler with JSON logging
         tokio::spawn(async move {
-            // Define minimum profit threshold
-            let min_profit_threshold = alloy_primitives::U256::from(10_000_000_000_000u64); // 0.00001 ETH (10 microether)
+            // Define minimum profit threshold from env or default
+            let min_profit_threshold = std::env::var("MEV_MIN_PROFIT_THRESHOLD")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(alloy_primitives::U256::from)
+                .unwrap_or_else(|| alloy_primitives::U256::from(10_000_000_000_000u64)); // Default: 0.00001 ETH (10 microether)
+            
+            info!(
+                threshold_wei = %min_profit_threshold,
+                threshold_eth = format!("{:.6}", min_profit_threshold.as_limbs()[0] as f64 / 1e18),
+                "MEV profit threshold configured"
+            );
             
             while let Some(opportunity) = mev_result_rx.recv().await {
                 info!(
@@ -178,9 +262,37 @@ fn main() -> eyre::Result<()> {
                     if let Err(e) = log_mev_opportunity_to_json(&opportunity) {
                         error!(error = ?e, "Failed to log MEV opportunity to JSON");
                     }
+                    
+                    // Process the opportunity (build, sign, and submit transaction)
+                    let process_start = std::time::Instant::now();
+                    
+                    match transaction_service.process_opportunity(&opportunity, &mev_provider).await {
+                        Ok(()) => {
+                            let elapsed = process_start.elapsed();
+                            info!(
+                                strategy = %opportunity.strategy,
+                                block = opportunity.block_number,
+                                elapsed_ms = elapsed.as_millis(),
+                                "Successfully processed MEV opportunity"
+                            );
+                        }
+                        Err(e) => {
+                            error!(
+                                strategy = %opportunity.strategy,
+                                block = opportunity.block_number,
+                                error = ?e,
+                                "Failed to process MEV opportunity"
+                            );
+                        }
+                    }
+                } else {
+                    debug!(
+                        strategy = %opportunity.strategy,
+                        profit_wei = %opportunity.expected_profit,
+                        threshold_wei = %min_profit_threshold,
+                        "MEV opportunity below profit threshold, skipping"
+                    );
                 }
-                
-                // TODO: Submit bundle to builder or execute on-chain
             }
         });
         
