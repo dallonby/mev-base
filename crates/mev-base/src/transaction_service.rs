@@ -4,6 +4,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_network::TxSigner;
 use reth_provider::{StateProviderFactory, HeaderProvider};
 use alloy_consensus::BlockHeader;
+use alloy_eips::eip2718::Encodable2718;
 use eyre::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -234,7 +235,8 @@ impl TransactionService {
         let signature = wallet.sign_transaction(&mut tx_mut).await?;
         let tx_hash = tx.signature_hash();
         let signed_tx = TxEnvelope::Eip1559(Signed::new_unchecked(tx, signature, tx_hash));
-        let signed_bytes = alloy_rlp::encode(&signed_tx);
+        // Use EIP-2718 encoding for typed transactions
+        let signed_bytes = signed_tx.encoded_2718();
         let signed_hex = format!("0x{}", hex::encode(&signed_bytes));
 
         info!(

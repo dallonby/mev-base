@@ -199,3 +199,7 @@ custom-engine-api = []
 [[bin]]
 name = "mevbase"
 path = "src/main.rs"
+
+[[bin]]
+name = "test-sequencer"
+path = "src/bin/test_sequencer.rs"

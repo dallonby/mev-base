@@ -251,4 +251,4 @@ docs/_site/
 .cache/
 
 # MEV results log
-mev_results.json
+mev_results.jsonl

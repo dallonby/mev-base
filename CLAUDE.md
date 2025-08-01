@@ -29,8 +29,8 @@
 - **mev-analyze**: Analyze historical MEV results from JSON logs
   - Filter by block, flashblock, strategy
   - Show statistics and profitability analysis
-  - Usage: `mev-analyze --results-file mev_results.json --stats`
-  - Example filtering: `mev-analyze --results-file mev_results.json --block 33646198 --strategy Backrun_AeroWeth`
+  - Usage: `mev-analyze --results-file mev_results.jsonl --stats`
+  - Example filtering: `mev-analyze --results-file mev_results.jsonl --block 33646198 --strategy Backrun_AeroWeth`
 
 - **mev-backtest-block**: Replay block transactions to find MEV opportunities
   - Connects to running node via RPC (default: http://localhost:8545)
@@ -51,7 +51,7 @@
 - Minimum profit threshold updated to 0.00001 ETH (10 microether)
   - Accounts for Base mainnet's ultra-low gas costs (0.01 gwei)
   - Ensures 5x profit margin over typical 200k gas transaction (~0.000002 ETH)
-- JSON logging to `mev_results.json` for opportunities exceeding threshold
+- JSON logging to `mev_results.jsonl` for opportunities exceeding threshold
   - Logs: timestamp, block/flashblock, strategy, profit (wei & ETH), bundle details
   - Only logs from main MEV handler after receiving results from workers
 

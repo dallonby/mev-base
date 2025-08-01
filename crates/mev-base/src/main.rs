@@ -551,11 +551,11 @@ fn log_mev_opportunity_to_json(opportunity: &mev_search_worker::MevOpportunity) 
         first_tx_calldata,
     };
     
-    // Append to JSON file
+    // Append to JSONL file (JSON Lines format)
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open("mev_results.json")?;
+        .open("mev_results.jsonl")?;
     
     let json = serde_json::to_string(&result)?;
     writeln!(file, "{}", json)?;
