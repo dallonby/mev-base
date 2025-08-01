@@ -9,6 +9,7 @@ use reth_optimism_node::OpRethReceiptBuilder;
 use reth_optimism_primitives::OpPrimitives;
 use reth_evm::ConfigureEvm;
 use std::sync::Arc;
+use tracing::{debug, trace, info, warn, error};
 
 use crate::flashblock_state::FlashblockStateSnapshot;
 use crate::mev_search_worker::{MevStrategy, MevOpportunity};
@@ -56,8 +57,7 @@ impl MevTaskWorker {
     {
         let task_start = std::time::Instant::now();
         let latency_ms = self.flashblock_received_at.elapsed().as_secs_f64() * 1000.0;
-        println!("🔍 MEV Task Worker starting {:?} search (latency: {:.2}ms)", 
-            self.strategy, latency_ms);
+        debug!(strategy = ?self.strategy, latency_ms = latency_ms, "MEV Task Worker starting search");
         
         // Get a fresh state provider - this will hold a database read transaction
         let provider_start = std::time::Instant::now();
@@ -106,13 +106,15 @@ impl MevTaskWorker {
         let evm_time = evm_start.elapsed().as_secs_f64() * 1000.0;
         
         let setup_total = task_start.elapsed().as_secs_f64() * 1000.0;
-        println!("   ⏱️  Setup timing breakdown:");
-        println!("      ├─ State provider: {:.2}ms", provider_time);
-        println!("      ├─ Block header: {:.2}ms", header_time);
-        println!("      ├─ CacheDB creation: {:.2}ms", cache_time);
-        println!("      ├─ Apply snapshot: {:.2}ms", apply_time);
-        println!("      ├─ EVM setup: {:.2}ms", evm_time);
-        println!("      └─ Total setup: {:.2}ms", setup_total);
+        trace!(
+            provider_ms = provider_time,
+            header_ms = header_time,
+            cache_ms = cache_time,
+            apply_ms = apply_time,
+            evm_ms = evm_time,
+            total_ms = setup_total,
+            "Setup timing breakdown"
+        );
         
         // Execute the MEV strategy
         let search_start = std::time::Instant::now();
@@ -122,7 +124,7 @@ impl MevTaskWorker {
         let search_time = search_start.elapsed().as_secs_f64() * 1000.0;
         
         let total_time = task_start.elapsed().as_secs_f64() * 1000.0;
-        println!("   ⏱️  Task completed in {:.2}ms (search: {:.2}ms)", total_time, search_time);
+        debug!(total_ms = total_time, search_ms = search_time, "Task completed");
         
         // The state provider (and database transaction) will be dropped here
         result
@@ -167,10 +169,11 @@ impl MevTaskWorker {
             cache_db.cache.contracts.insert(*code_hash, bytecode.clone());
         }
         
-        println!("   ⚡ Applied state snapshot: {} accounts, {} storage, {} contracts",
-            self.state_snapshot.account_changes.len(),
-            self.state_snapshot.storage_changes.values().map(|s| s.len()).sum::<usize>(),
-            self.state_snapshot.code_changes.len()
+        trace!(
+            accounts = self.state_snapshot.account_changes.len(),
+            storage = self.state_snapshot.storage_changes.values().map(|s| s.len()).sum::<usize>(),
+            contracts = self.state_snapshot.code_changes.len(),
+            "Applied state snapshot"
         );
         
         Ok(())
@@ -189,7 +192,7 @@ impl MevTaskWorker {
             _ => return Ok(None), // Should never happen
         };
         
-        println!("   🏃 Worker searching for backrun opportunity: {}", config_name);
+        debug!(config = %config_name, "Worker searching for backrun opportunity");
         
         // Create a backrun analyzer
         let analyzer = BackrunAnalyzer::new(alloy_primitives::U256::from(10_000_000_000_000u64)); // 0.00001 ETH (10 microether) min profit
@@ -199,23 +202,29 @@ impl MevTaskWorker {
         if let Some(config) = configs.get(config_name) {
                 // Check if contract exists in CacheDB
                 let contract_info = cache_db.basic(config.contract_address)?;
-                println!("   🔍 Target contract {} status:", config.contract_address);
-                println!("      - Config: {}", config_name);
-                println!("      - Tokens: {:?}", config.tokens);
+                trace!(
+                    contract = %config.contract_address,
+                    config = %config_name,
+                    tokens = ?config.tokens,
+                    "Target contract status"
+                );
                 match contract_info {
                     Some(info) => {
-                        println!("      - Balance: {} wei", info.balance);
-                        println!("      - Nonce: {}", info.nonce);
-                        println!("      - Code hash: {:?}", info.code_hash);
-                        println!("      - Code exists: {}", info.code_hash != alloy_primitives::KECCAK256_EMPTY);
+                        trace!(
+                            balance = %info.balance,
+                            nonce = info.nonce,
+                            code_hash = ?info.code_hash,
+                            has_code = (info.code_hash != alloy_primitives::KECCAK256_EMPTY),
+                            "Contract info"
+                        );
                         
                         if info.code_hash == alloy_primitives::KECCAK256_EMPTY {
-                            println!("      ❌ Contract has no code - skipping optimization!");
+                            debug!("Contract has no code - skipping optimization");
                             return Ok(None);
                         }
                     }
                     None => {
-                        println!("      ⚠️  Contract not found in state - skipping!");
+                        debug!("Contract not found in state - skipping");
                         return Ok(None);
                     }
                 }
@@ -260,13 +269,17 @@ impl MevTaskWorker {
                                     lifecycle.gradient_completed = Some(std::time::Instant::now());
                                     
                                     // Print timing report
-                                    println!("{}", lifecycle.generate_report());
+                                    trace!("{}", lifecycle.generate_report());
                                 }
                             }
                         }
                         
                         if result.delta > 0 {
-                            println!("   💰 Found profitable backrun! Profit: {} wei", result.delta);
+                            info!(
+                                profit_wei = result.delta,
+                                profit_eth = (result.delta as f64 / 1e18),
+                                "Found profitable backrun"
+                            );
                             
                             // Create MEV bundle
                             let bundle = crate::mev_bundle_types::MevBundle::new(
@@ -293,11 +306,11 @@ impl MevTaskWorker {
                                 strategy: format!("Backrun_{}", config_name),
                             }));
                         } else {
-                            println!("   ❌ No profitable backrun found");
+                            debug!("No profitable backrun found");
                         }
                     }
                     Err(e) => {
-                        println!("   ❌ Gradient optimization error: {:?}", e);
+                        warn!(error = ?e, "Gradient optimization error");
                     }
                 }
             }
@@ -337,16 +350,16 @@ where
         
         match worker.execute(provider).await {
             Ok(Some(opportunity)) => {
-                println!("   💰 MEV opportunity found!");
+                info!("MEV opportunity found");
                 if let Err(e) = result_tx.send(opportunity).await {
-                    println!("   ❌ Failed to send MEV opportunity: {:?}", e);
+                    error!(error = ?e, "Failed to send MEV opportunity");
                 }
             }
             Ok(None) => {
                 // No opportunity found
             }
             Err(e) => {
-                println!("   ❌ MEV task error: {:?}", e);
+                error!(error = ?e, "MEV task error");
             }
         }
     });
@@ -388,16 +401,16 @@ where
             
             match worker.execute(provider).await {
                 Ok(Some(opportunity)) => {
-                    println!("   💰 MEV opportunity found!");
+                    info!("MEV opportunity found");
                     if let Err(e) = result_tx.send(opportunity).await {
-                        println!("   ❌ Failed to send MEV opportunity: {:?}", e);
+                        error!(error = ?e, "Failed to send MEV opportunity");
                     }
                 }
                 Ok(None) => {
                     // No opportunity found
                 }
                 Err(e) => {
-                    println!("   ❌ MEV task error: {:?}", e);
+                    error!(error = ?e, "MEV task error");
                 }
             }
         })

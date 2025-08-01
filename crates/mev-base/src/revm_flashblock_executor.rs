@@ -66,7 +66,7 @@ impl RevmFlashblockExecutor {
         let (block_number, header) = match block_id {
             BlockId::Number(alloy_rpc_types_eth::BlockNumberOrTag::Latest) => {
                 let number = provider.best_block_number()?;
-                println!("   🔍 Best block number from provider: {}", number);
+                // println!("   🔍 Best block number from provider: {}", number);
                 let header = provider.header_by_number(number)?
                     .ok_or_else(|| eyre::eyre!("Header not found for block {}", number))?;
                 (number, header)
@@ -87,14 +87,14 @@ impl RevmFlashblockExecutor {
         
         // Create a basic header for the EVM environment (since we can't use generic header directly)
         let base_fee = header.base_fee_per_gas();
-        println!("   🔍 Fetched header for block {}:", header.number());
-        println!("      - Timestamp: {}", header.timestamp());
-        println!("      - Gas limit: {}", header.gas_limit());
-        println!("      - Base fee from header: {:?} (raw value)", base_fee);
+        // println!("   🔍 Fetched header for block {}:", header.number());
+        // println!("      - Timestamp: {}", header.timestamp());
+        // println!("      - Gas limit: {}", header.gas_limit());
+        // println!("      - Base fee from header: {:?} (raw value)", base_fee);
         
         // For Base mainnet after Bedrock, there should always be a base fee
         if base_fee.is_none() || base_fee == Some(0) {
-            println!("      ⚠️  WARNING: Base fee is missing or zero! This seems incorrect for Base mainnet.");
+            // println!("      ⚠️  WARNING: Base fee is missing or zero! This seems incorrect for Base mainnet.");
         }
         
         let evm_header = alloy_consensus::Header {
@@ -118,10 +118,10 @@ impl RevmFlashblockExecutor {
         self.current_block = Some(block_number);
         self.current_base_fee = base_fee_wei as u128;
         
-        println!("✅ Initialized revm executor for block {} (base fee: {} wei = {:.4} gwei)", 
-            block_number, 
-            base_fee_wei,
-            base_fee_gwei);
+        // println!("✅ Initialized revm executor for block {} (base fee: {} wei = {:.4} gwei)", 
+        //     block_number, 
+        //     base_fee_wei,
+        //     base_fee_gwei);
         
         Ok(())
     }
@@ -146,7 +146,7 @@ impl RevmFlashblockExecutor {
         let evm_env = self.evm_env.as_ref()
             .ok_or_else(|| eyre::eyre!("EVM environment not initialized."))?;
         
-        println!("\n🔥 Executing flashblock {} with revm (block {})", flashblock_index, event.block_number);
+        // println!("\n🔥 Executing flashblock {} with revm (block {})", flashblock_index, event.block_number);
         let start = std::time::Instant::now();
         
         let mut results = Vec::new();
@@ -224,11 +224,11 @@ impl RevmFlashblockExecutor {
         let successful = results.iter().filter(|r| r.error.is_none()).count();
         let failed = results.len() - successful;
         
-        println!("   ├─ Results: {}/{} successful, {} failed", successful, results.len(), failed);
-        println!("   └─ Flashblock executed in {:.2}ms ({:.2}ms per tx avg)", 
-            elapsed.as_secs_f64() * 1000.0,
-            (elapsed.as_secs_f64() * 1000.0) / event.transactions.len() as f64
-        );
+        // println!("   ├─ Results: {}/{} successful, {} failed", successful, results.len(), failed);
+        // println!("   └─ Flashblock executed in {:.2}ms ({:.2}ms per tx avg)", 
+        //     elapsed.as_secs_f64() * 1000.0,
+        //     (elapsed.as_secs_f64() * 1000.0) / event.transactions.len() as f64
+        // );
         
         Ok(results)
     }
@@ -352,9 +352,9 @@ impl RevmFlashblockExecutor {
         bundle_txs: Vec<crate::mev_bundle_types::BundleTransaction>,
         block_number: u64,
     ) -> eyre::Result<Vec<EthCallResponse>> {
-        println!("\n🎯 Simulating MEV bundle on top of flashblock state");
-        println!("   ├─ Bundle size: {} transactions", bundle_txs.len());
-        println!("   └─ Target block: {}", block_number);
+        // println!("\n🎯 Simulating MEV bundle on top of flashblock state");
+        // println!("   ├─ Bundle size: {} transactions", bundle_txs.len());
+        // println!("   └─ Target block: {}", block_number);
         
         let start = std::time::Instant::now();
         let mut results = Vec::new();
@@ -392,9 +392,9 @@ impl RevmFlashblockExecutor {
         // Now simulate each transaction
         for (i, (tx_env, tx_hash, enveloped_bytes)) in converted_bundle.into_iter().enumerate() {
             if tx_hash == alloy_primitives::B256::ZERO {
-                println!("   ├─ MEV Tx {}/{}: [unsigned]", i + 1, bundle_txs.len());
+                // println!("   ├─ MEV Tx {}/{}: [unsigned]", i + 1, bundle_txs.len());
             } else {
-                println!("   ├─ MEV Tx {}/{}: {}", i + 1, bundle_txs.len(), tx_hash);
+                // println!("   ├─ MEV Tx {}/{}: {}", i + 1, bundle_txs.len(), tx_hash);
             }
             
             // Create OpTransaction with enveloped bytes
@@ -425,7 +425,7 @@ impl RevmFlashblockExecutor {
                                 Output::Call(bytes) => bytes,
                                 Output::Create(bytes, _) => bytes,
                             };
-                            println!("      ✅ Success: gas used {} ({}k)", gas_used, gas_used / 1000);
+                            // println!("      ✅ Success: gas used {} ({}k)", gas_used, gas_used / 1000);
                             EthCallResponse {
                                 value: Some(value),
                                 error: None,
@@ -434,7 +434,7 @@ impl RevmFlashblockExecutor {
                         }
                         ExecutionResult::Revert { output, .. } => {
                             let error_msg = format!("execution reverted: 0x{}", hex::encode(&output));
-                            println!("      ❌ Reverted: {}", error_msg);
+                            // println!("      ❌ Reverted: {}", error_msg);
                             EthCallResponse {
                                 value: None,
                                 error: Some(error_msg),
@@ -443,7 +443,7 @@ impl RevmFlashblockExecutor {
                         }
                         ExecutionResult::Halt { reason, .. } => {
                             let error_msg = format!("execution halted: {:?}", reason);
-                            println!("      ❌ Halted: {}", error_msg);
+                            // println!("      ❌ Halted: {}", error_msg);
                             EthCallResponse {
                                 value: None,
                                 error: Some(error_msg),
@@ -454,7 +454,7 @@ impl RevmFlashblockExecutor {
                     // Note: We're NOT committing state changes for bundle simulation
                 }
                 Err(ref e) => {
-                    println!("      ❌ Failed: {:?}", e);
+                    // println!("      ❌ Failed: {:?}", e);
                     EthCallResponse {
                         value: None,
                         error: Some(format!("EVM error: {:?}", e)),
@@ -467,10 +467,10 @@ impl RevmFlashblockExecutor {
         }
         
         let elapsed = start.elapsed();
-        println!("   └─ Bundle simulation completed in {:.2}ms ({:.2}ms per tx avg)", 
-            elapsed.as_secs_f64() * 1000.0,
-            (elapsed.as_secs_f64() * 1000.0) / bundle_txs.len() as f64
-        );
+        // println!("   └─ Bundle simulation completed in {:.2}ms ({:.2}ms per tx avg)", 
+        //     elapsed.as_secs_f64() * 1000.0,
+        //     (elapsed.as_secs_f64() * 1000.0) / bundle_txs.len() as f64
+        // );
         
         Ok(results)
     }

@@ -12,6 +12,7 @@ use reth_evm::{ConfigureEvm, Evm};
 use crate::flashblock_state::FlashblockStateSnapshot;
 use alloy_consensus::{TxEip1559, TxEnvelope, Signed};
 use alloy_eips::eip2718::Encodable2718;
+use tracing::{debug, trace};
 
 // Re-export types from the main gradient descent module
 pub use crate::gradient_descent::{GradientParams, OptimizeOutput};
@@ -72,7 +73,7 @@ impl FastGradientOptimizer {
             storage: Default::default(),
         });
         
-        println!("      ⚡ Fast gradient optimizer starting with {} iterations", self.max_iterations);
+        trace!(iterations = self.max_iterations, "Fast gradient optimizer starting");
         
         // Create reusable EVM environment
         let current_timestamp = std::time::SystemTime::now()
@@ -129,7 +130,7 @@ impl FastGradientOptimizer {
             if output.delta > 0 {
                 if output.delta > best_output.delta {
                     best_output = output.clone();
-                    println!("      💰 Profit found at qty {}: {} wei", test_value, output.delta);
+                    trace!(qty = %test_value, profit_wei = output.delta, "Profit found");
                 }
                 promising_regions.push((test_value, output.delta));
             }
@@ -181,7 +182,7 @@ impl FastGradientOptimizer {
                     
                     if output.delta > best_output.delta {
                         best_output = output.clone();
-                        println!("      💰 Better profit at qty {}: {} wei", mid, output.delta);
+                        trace!(qty = %mid, profit_wei = output.delta, "Better profit found");
                         
                         // Narrow search around this point
                         let new_radius = (right - left) / U256::from(4);
@@ -232,14 +233,15 @@ impl FastGradientOptimizer {
         
         let total_time = start_time.elapsed().as_secs_f64() * 1000.0;
         
-        println!("      📈 Fast optimization complete:");
-        println!("         - Time: {:.1}ms (target was 90ms)", total_time);
-        println!("         - Iterations: {}/{}", iterations_used, self.max_iterations);
-        println!("         - Best quantity: {}", best_output.qty_in);
-        println!("         - Best profit: {} wei", best_output.delta);
-        if total_time > 0.0 {
-            println!("         - Speedup: {:.1}x", 900.0 / total_time);
-        }
+        trace!(
+            time_ms = total_time,
+            iterations = iterations_used,
+            max_iterations = self.max_iterations,
+            best_qty = %best_output.qty_in,
+            best_profit_wei = best_output.delta,
+            speedup = (900.0 / total_time.max(0.1)),
+            "Fast optimization complete"
+        );
         
         Ok(best_output)
     }
@@ -276,7 +278,7 @@ impl FastGradientOptimizer {
         tx_env.value = U256::ZERO;
         
         if should_log {
-            println!("      🔬 Testing initial qty {} on {}", qty_in, params.target_address);
+            trace!(qty = %qty_in, target = %params.target_address, "Testing initial quantity");
         }
         
         // Create minimal transaction for Optimism

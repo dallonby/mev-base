@@ -133,7 +133,7 @@ fn main() -> eyre::Result<()> {
         // Spawn task to receive flashblocks and queue them
         tokio::spawn(async move {
             while let Ok(event) = flashblocks_receiver.recv().await {
-                info!(
+                debug!(
                     block = event.block_number,
                     flashblock = event.index,
                     tx_count = event.transactions.len(),
@@ -209,7 +209,7 @@ fn main() -> eyre::Result<()> {
                 let timing_for_workers = Arc::new(tokio::sync::Mutex::new(Some(timing.clone())));
                 *timing_tracker.lock().await = Some(timing.clone());
                 
-                info!(
+                debug!(
                     block = event.block_number,
                     flashblock = event.index,
                     "Processing flashblock in simulator thread"
@@ -241,7 +241,7 @@ fn main() -> eyre::Result<()> {
                 match revm_executor.execute_flashblock(&event, event.index).await {
                     Ok(results) => {
                         let successful = results.iter().filter(|r| r.error.is_none()).count();
-                        info!(
+                        debug!(
                             successful = successful,
                             total = results.len(),
                             "Revm execution complete"
@@ -269,7 +269,7 @@ fn main() -> eyre::Result<()> {
                                 timing.strategy_analysis_completed = Some(std::time::Instant::now());
                                 
                                 if !strategies.is_empty() {
-                                    info!(
+                                    debug!(
                                         count = strategies.len(),
                                         strategies = ?strategies,
                                         "Triggering MEV strategies"
@@ -339,7 +339,7 @@ fn main() -> eyre::Result<()> {
                 }
                 
                 let total_time = sim_start.elapsed().as_secs_f64() * 1000.0;
-                info!(
+                debug!(
                     block = event.block_number,
                     flashblock = event.index,
                     time_ms = total_time,

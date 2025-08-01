@@ -249,3 +249,6 @@ docs/_site/
 *.tmp
 *.temp
 .cache/
+
+# MEV results log
+mev_results.json

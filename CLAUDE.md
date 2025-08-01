@@ -25,6 +25,28 @@
   - Supports .env file configuration
 - Usage: Set `MEV_LOG=debug` for detailed execution logs
 
+### Backtest Tools
+- **mev-analyze**: Analyze historical MEV results from JSON logs
+  - Filter by block, flashblock, strategy
+  - Show statistics and profitability analysis
+  - Usage: `mev-analyze --results-file mev_results.json --stats`
+  - Example filtering: `mev-analyze --results-file mev_results.json --block 33646198 --strategy Backrun_AeroWeth`
+
+- **mev-backtest-block**: Replay block transactions to find MEV opportunities
+  - Connects to running node via RPC (default: http://localhost:8545)
+  - Can analyze after specific transaction index or all transactions
+  - Filter by specific processor configuration
+  - Usage: `mev-backtest-block --block 33646198 --processor AeroWeth --rpc http://localhost:8545`
+  - With IPC: `mev-backtest-block --block 33646198 --rpc ~/.local/share/reth/mainnet/reth.ipc`
+  - Note: Requires running Base node with RPC/IPC enabled
+
+### Backtest Architecture Notes
+- Uses alloy-provider for RPC/IPC connection
+- Creates mock state snapshots (full REVM integration pending)
+- Runs backrun analyzer at each transaction index
+- Can filter for specific processor configurations
+- Future: Full transaction replay with REVM state tracking
+
 ### MEV Profit Threshold & Logging
 - Minimum profit threshold updated to 0.00001 ETH (10 microether)
   - Accounts for Base mainnet's ultra-low gas costs (0.01 gwei)
