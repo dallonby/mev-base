@@ -300,7 +300,7 @@ impl FastGradientOptimizer {
         op_tx.enveloped_tx = Some(enveloped_bytes.into());
         
         // Clone environment for this execution
-        let mut local_env = evm_env.clone();
+        let local_env = evm_env.clone();
         
         // Create EVM with cloned environment
         let mut evm = evm_config.evm_with_env(&mut *cache_db, local_env);

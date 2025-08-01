@@ -150,14 +150,24 @@ fn main() -> eyre::Result<()> {
         // Create timing tracker
         let timing_tracker = lifecycle_timing::create_timing_tracker();
         
-        // Spawn MEV opportunity handler
+        // Spawn MEV opportunity handler with JSON logging
         tokio::spawn(async move {
+            // Define minimum profit threshold
+            let min_profit_threshold = alloy_primitives::U256::from(10_000_000_000_000u64); // 0.00001 ETH (10 microether)
+            
             while let Some(opportunity) = mev_result_rx.recv().await {
                 println!("💰 MEV Opportunity Found!");
                 println!("   ├─ Strategy: {}", opportunity.strategy);
                 println!("   ├─ Block: {} Flashblock: {}", opportunity.block_number, opportunity.flashblock_index);
                 println!("   ├─ Expected Profit: {} wei", opportunity.expected_profit);
                 println!("   └─ Bundle size: {} txs", opportunity.bundle.transactions.len());
+                
+                // Log to JSON if profit exceeds threshold
+                if opportunity.expected_profit > min_profit_threshold {
+                    if let Err(e) = log_mev_opportunity_to_json(&opportunity) {
+                        println!("   ❌ Failed to log MEV opportunity to JSON: {:?}", e);
+                    }
+                }
                 
                 // TODO: Submit bundle to builder or execute on-chain
             }
@@ -240,18 +250,16 @@ fn main() -> eyre::Result<()> {
                                 if !strategies.is_empty() {
                                     println!("   🎯 Triggering {} MEV strategies: {:?}", strategies.len(), strategies);
                                     
-                                    // Spawn short-lived MEV tasks for each strategy
-                                    for strategy in strategies {
-                                        mev_task_worker::spawn_mev_task(
-                                            chain_spec.clone(),
-                                            blockchain_provider_for_task.clone(),
-                                            strategy,
-                                            state_snapshot.clone(),
-                                            event.received_at,
-                                            mev_result_tx.clone(),
-                                            Some(timing_for_workers.clone()),
-                                        );
-                                    }
+                                    // Spawn all MEV tasks in batch for reduced overhead
+                                    mev_task_worker::spawn_mev_tasks_batch(
+                                        chain_spec.clone(),
+                                        blockchain_provider_for_task.clone(),
+                                        strategies,
+                                        state_snapshot.clone(),
+                                        event.received_at,
+                                        mev_result_tx.clone(),
+                                        Some(timing_for_workers.clone()),
+                                    );
                                     timing.workers_spawned = Some(std::time::Instant::now());
                                 } else {
                                     println!("   ⏭️  No MEV strategies triggered for this flashblock");
@@ -353,4 +361,64 @@ fn main() -> eyre::Result<()> {
 
         handle.wait_for_node_exit().await
     })
+}
+
+/// Log MEV opportunity to JSON file
+fn log_mev_opportunity_to_json(opportunity: &mev_search_worker::MevOpportunity) -> eyre::Result<()> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use serde::Serialize;
+    
+    #[derive(Serialize)]
+    struct MevResultLog {
+        timestamp: u64,
+        block_number: u64,
+        flashblock_index: u32,
+        strategy: String,
+        expected_profit_wei: String,
+        expected_profit_eth: f64,
+        bundle_size: usize,
+        // Add first transaction details if available
+        first_tx_to: Option<String>,
+        first_tx_calldata: Option<String>,
+    }
+    
+    let first_tx = opportunity.bundle.transactions.first();
+    
+    let (first_tx_to, first_tx_calldata) = match first_tx {
+        Some(mev_bundle_types::BundleTransaction::Unsigned { to, input, .. }) => {
+            (to.map(|addr| format!("{:?}", addr)), Some(format!("0x{}", hex::encode(input))))
+        }
+        Some(mev_bundle_types::BundleTransaction::Signed(_)) => {
+            // For signed transactions, we'd need to decode the envelope
+            (None, None)
+        }
+        None => (None, None),
+    };
+    
+    let result = MevResultLog {
+        timestamp: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+        block_number: opportunity.block_number,
+        flashblock_index: opportunity.flashblock_index,
+        strategy: opportunity.strategy.clone(),
+        expected_profit_wei: opportunity.expected_profit.to_string(),
+        expected_profit_eth: opportunity.expected_profit.as_limbs()[0] as f64 / 1e18,
+        bundle_size: opportunity.bundle.transactions.len(),
+        first_tx_to,
+        first_tx_calldata,
+    };
+    
+    // Append to JSON file
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("mev_results.json")?;
+    
+    let json = serde_json::to_string(&result)?;
+    writeln!(file, "{}", json)?;
+    
+    Ok(())
 }

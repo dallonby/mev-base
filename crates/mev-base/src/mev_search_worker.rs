@@ -8,13 +8,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// MEV strategy types
-#[derive(Clone, Debug, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum MevStrategy {
-    DexArbitrage,
-    Liquidation,
-    Sandwich,
-    JitLiquidity,
-    Backrun,
+    Backrun(String), // Config name for specific backrun strategy
 }
 
 /// Message to MEV search workers
@@ -147,12 +143,8 @@ async fn mev_search_worker_steal(
             println!(
                 "   ⏱️  Worker {} starting {} search on block {} fb {} (latency: {:.2}ms)",
                 worker_id,
-                match task.strategy {
-                    MevStrategy::DexArbitrage => "DEX arbitrage",
-                    MevStrategy::Liquidation => "liquidation",
-                    MevStrategy::Sandwich => "sandwich",
-                    MevStrategy::JitLiquidity => "JIT liquidity",
-                    MevStrategy::Backrun => "backrun",
+                match &task.strategy {
+                    MevStrategy::Backrun(config) => config,
                 },
                 state.block_number,
                 state.flashblock_index,
@@ -161,19 +153,7 @@ async fn mev_search_worker_steal(
             
             // Execute only the specified strategy
             match task.strategy {
-                MevStrategy::DexArbitrage => {
-                    search_dex_arbitrage(worker_id, state, &result_tx).await;
-                }
-                MevStrategy::Liquidation => {
-                    search_liquidations(worker_id, state, &result_tx).await;
-                }
-                MevStrategy::Sandwich => {
-                    search_sandwich_opportunities(worker_id, state, &result_tx).await;
-                }
-                MevStrategy::JitLiquidity => {
-                    search_jit_liquidity(worker_id, state, &result_tx).await;
-                }
-                MevStrategy::Backrun => {
+                MevStrategy::Backrun(_) => {
                     // Backrun handled by task workers with CacheDB
                     println!("   🏃 Backrun strategy should use task workers");
                 }
@@ -185,111 +165,6 @@ async fn mev_search_worker_steal(
     }
 }
 
-/// Mock DEX arbitrage searcher
-async fn search_dex_arbitrage(
-    worker_id: usize,
-    state: &FlashblockStateSnapshot,
-    result_tx: &mpsc::Sender<MevOpportunity>,
-) {
-    // MOCK: Find arbitrage on every 3rd flashblock
-    if state.flashblock_index % 3 == 0 {
-        let mock_bundle = MevBundle::new(
-            vec![
-                BundleTransaction::unsigned(
-                    Address::from([0x01; 20]),
-                    Some(Address::from([0xAA; 20])), // Uniswap
-                    U256::from(1_000_000_000_000_000_000u128),
-                    Bytes::from(vec![0x11; 4]),
-                    500_000,
-                    U256::from(state.base_fee),
-                    0,
-                ),
-                BundleTransaction::unsigned(
-                    Address::from([0x01; 20]),
-                    Some(Address::from([0xBB; 20])), // SushiSwap
-                    U256::ZERO,
-                    Bytes::from(vec![0x22; 4]),
-                    500_000,
-                    U256::from(state.base_fee),
-                    1,
-                ),
-            ],
-            state.block_number,
-        );
-        
-        let opportunity = MevOpportunity {
-            block_number: state.block_number,
-            flashblock_index: state.flashblock_index,
-            bundle: mock_bundle,
-            expected_profit: U256::from(50_000_000_000_000_000u128),
-            strategy: format!("DEXArbitrage_Worker{}", worker_id),
-        };
-        
-        let _ = result_tx.send(opportunity).await;
-    }
-}
-
-/// Mock liquidation searcher
-async fn search_liquidations(
-    worker_id: usize,
-    state: &FlashblockStateSnapshot,
-    result_tx: &mpsc::Sender<MevOpportunity>,
-) {
-    // MOCK: Find liquidation on every 5th flashblock
-    if state.flashblock_index % 5 == 0 {
-        let mock_bundle = MevBundle::new(
-            vec![
-                BundleTransaction::unsigned(
-                    Address::from([0x02; 20]),
-                    Some(Address::from([0xCC; 20])), // Lending protocol
-                    U256::from(2_000_000_000_000_000_000u128),
-                    Bytes::from(vec![0x33; 4]), // liquidate()
-                    800_000,
-                    U256::from(state.base_fee),
-                    0,
-                ),
-            ],
-            state.block_number,
-        );
-        
-        let opportunity = MevOpportunity {
-            block_number: state.block_number,
-            flashblock_index: state.flashblock_index,
-            bundle: mock_bundle,
-            expected_profit: U256::from(100_000_000_000_000_000u128),
-            strategy: format!("Liquidation_Worker{}", worker_id),
-        };
-        
-        let _ = result_tx.send(opportunity).await;
-    }
-}
-
-/// Mock sandwich attack searcher
-async fn search_sandwich_opportunities(
-    _worker_id: usize,
-    state: &FlashblockStateSnapshot,
-    _result_tx: &mpsc::Sender<MevOpportunity>,
-) {
-    // MOCK: Would analyze pending transactions for large swaps
-    if state.flashblock_index % 7 == 0 {
-        // In production, would create front-run and back-run transactions
-        // For now, just simulate search time
-        tokio::time::sleep(Duration::from_micros(500)).await;
-    }
-}
-
-/// Mock JIT liquidity searcher
-async fn search_jit_liquidity(
-    _worker_id: usize,
-    state: &FlashblockStateSnapshot,
-    _result_tx: &mpsc::Sender<MevOpportunity>,
-) {
-    // MOCK: Would look for large swaps to provide just-in-time liquidity
-    if state.flashblock_index % 11 == 0 {
-        // In production, would add/remove liquidity around large trades
-        tokio::time::sleep(Duration::from_micros(300)).await;
-    }
-}
 
 /// Known function selectors for MEV detection
 mod selectors {
@@ -355,32 +230,21 @@ pub fn analyze_state_for_strategies(state: &FlashblockStateSnapshot) -> Vec<MevS
     let mut strategies = HashSet::new();
     
     // Check for backrun opportunities using BackrunAnalyzer
-    let backrun_analyzer = BackrunAnalyzer::new(U256::from(1_000_000_000_000_000u64)); // 0.001 ETH min profit
+    let backrun_analyzer = BackrunAnalyzer::new(U256::from(10_000_000_000_000u64)); // 0.00001 ETH (10 microether) min profit
     let triggered_configs = backrun_analyzer.analyze_state_for_backrun(state);
     if !triggered_configs.is_empty() {
         println!("   🎯 Backrun analyzer triggered {} configs: {:?}", triggered_configs.len(), triggered_configs);
-        strategies.insert(MevStrategy::Backrun);
-    }
-    
-    // Analyze actual state changes
-    for (address, _account_info) in &state.account_changes {
-        // Check if DEX-related addresses were touched
-        if base_addresses::is_dex_address(address) {
-            strategies.insert(MevStrategy::DexArbitrage);
-        }
-        
-        // TODO: Add lending protocol addresses for liquidations
-        // TODO: Detect large balance changes for sandwich opportunities
-    }
-    
-    // Also analyze storage changes
-    for (address, storage_changes) in &state.storage_changes {
-        if !storage_changes.is_empty() && base_addresses::is_dex_address(address) {
-            strategies.insert(MevStrategy::DexArbitrage);
+        // Create a separate strategy for each triggered config
+        for config_name in triggered_configs {
+            strategies.insert(MevStrategy::Backrun(config_name));
         }
     }
     
+    
+    
+    // TODO: Re-enable when we implement liquidation strategies
     // Analyze transaction calldata for MEV signals
+    /*
     for tx in &state.transactions {
         let calldata = tx.input();
         
@@ -394,7 +258,10 @@ pub fn analyze_state_for_strategies(state: &FlashblockStateSnapshot) -> Vec<MevS
             strategies.insert(MevStrategy::DexArbitrage);
         }
     }
+    */
     
+    // TODO: Re-enable when we implement other strategies
+    /*
     // Fallback to mock logic if no real strategies triggered
     if strategies.is_empty() {
         // Use mock logic based on flashblock index
@@ -411,6 +278,7 @@ pub fn analyze_state_for_strategies(state: &FlashblockStateSnapshot) -> Vec<MevS
             strategies.insert(MevStrategy::JitLiquidity);
         }
     }
+    */
     
     strategies.into_iter().collect()
 }

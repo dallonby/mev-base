@@ -10,3 +10,51 @@
 - Document changes to architecture, design, and interfaces into CLAUDE.md
 - Refer to this document every time you /compact
 - Compile OFTEN.
+
+## Recent Updates (Latest: 2025-08-01)
+
+### MEV Profit Threshold & Logging
+- Minimum profit threshold updated to 0.00001 ETH (10 microether)
+  - Accounts for Base mainnet's ultra-low gas costs (0.01 gwei)
+  - Ensures 5x profit margin over typical 200k gas transaction (~0.000002 ETH)
+- JSON logging to `mev_results.json` for opportunities exceeding threshold
+  - Logs: timestamp, block/flashblock, strategy, profit (wei & ETH), bundle details
+  - Only logs from main MEV handler after receiving results from workers
+
+### Performance Optimizations
+- **Batch Task Spawning**: Reduced latency from 9.25ms to ~3.5ms
+  - All MEV tasks spawn together using `spawn_mev_tasks_batch()`
+  - State snapshot wrapped in Arc to avoid multiple clones
+  - Parallel execution with minimal overhead
+- **FastGradientOptimizer**: 10x speedup (900ms → 90ms)
+  - Reduced iterations from 250 to 50
+  - Pre-funds bot address once
+  - Reuses EVM environment
+- **Dynamic Bounds**: min = max(1, initialQty/100), max = min(initialQty*100, 0xffffff)
+
+### Code Cleanup
+- Removed mock strategies (DexArbitrage, Liquidation, Sandwich, JitLiquidity)
+- Only production Backrun strategy remains
+- Removed unused gradient logging code
+
+## Architecture Updates
+
+### Parallel Backrun Workers
+- Each triggered backrun config spawns its own worker thread with independent CacheDB
+- Workers run in parallel, each optimizing a different MEV opportunity
+- Example: When 4 configs trigger (UsdbcWethUsdc, AeroWeth, UsdcUsdtWeth, WethUsdc), 4 parallel workers spawn
+
+### Strategy Detection (Currently Disabled)
+- Oracle update detection code is commented out but preserved for future liquidation implementation
+- Function selectors for oracle updates:
+  - `0x50d25bcd`: latestAnswer()
+  - `0x9a6fc8f5`: transmit()
+  - `0xc9807539`: submit()
+  - `0x6fadcf72`: forward()
+- This code will be re-enabled when implementing Aave V3 liquidation logic
+
+### Performance Optimizations
+- FastGradientOptimizer achieves 10x speedup (900ms → 90ms)
+- Reduced iterations from 250 to 50
+- Pre-funds bot address once instead of per-iteration
+- Streamlined EVM execution with reused environments

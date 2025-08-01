@@ -117,11 +117,7 @@ impl MevTaskWorker {
         // Execute the MEV strategy
         let search_start = std::time::Instant::now();
         let result = match self.strategy {
-            MevStrategy::DexArbitrage => self.search_dex_arbitrage(&mut cache_db),
-            MevStrategy::Liquidation => self.search_liquidations(&mut cache_db),
-            MevStrategy::Sandwich => self.search_sandwich(&mut cache_db),
-            MevStrategy::JitLiquidity => self.search_jit_liquidity(&mut cache_db),
-            MevStrategy::Backrun => self.search_backrun(&mut cache_db, &evm_config, &self.timing_tracker),
+            MevStrategy::Backrun(_) => self.search_backrun(&mut cache_db, &evm_config, &self.timing_tracker),
         };
         let search_time = search_start.elapsed().as_secs_f64() * 1000.0;
         
@@ -180,58 +176,6 @@ impl MevTaskWorker {
         Ok(())
     }
     
-    /// Search for DEX arbitrage opportunities
-    fn search_dex_arbitrage<DB>(&self, _cache_db: &mut CacheDB<DB>) -> eyre::Result<Option<MevOpportunity>>
-    where
-        DB: revm::Database,
-    {
-        // TODO: Implement actual DEX arbitrage search
-        // 1. Check current pool states for affected DEXs
-        // 2. Calculate arbitrage paths
-        // 3. Simulate swaps to verify profitability
-        // 4. Build MEV bundle if profitable
-        
-        println!("   📊 Searching for DEX arbitrage opportunities...");
-        
-        // For now, return None (no opportunity found)
-        Ok(None)
-    }
-    
-    /// Search for liquidation opportunities
-    fn search_liquidations<DB>(&self, _cache_db: &mut CacheDB<DB>) -> eyre::Result<Option<MevOpportunity>>
-    where
-        DB: revm::Database,
-    {
-        // TODO: Implement actual liquidation search
-        // 1. Check lending protocol positions
-        // 2. Calculate liquidation profitability
-        // 3. Build liquidation bundle if profitable
-        
-        println!("   💸 Searching for liquidation opportunities...");
-        
-        // For now, return None
-        Ok(None)
-    }
-    
-    /// Search for sandwich opportunities
-    fn search_sandwich<DB>(&self, _cache_db: &mut CacheDB<DB>) -> eyre::Result<Option<MevOpportunity>>
-    where
-        DB: revm::Database,
-    {
-        // TODO: Implement sandwich attack search
-        println!("   🥪 Searching for sandwich opportunities...");
-        Ok(None)
-    }
-    
-    /// Search for JIT liquidity opportunities
-    fn search_jit_liquidity<DB>(&self, _cache_db: &mut CacheDB<DB>) -> eyre::Result<Option<MevOpportunity>>
-    where
-        DB: revm::Database,
-    {
-        // TODO: Implement JIT liquidity provision
-        println!("   💧 Searching for JIT liquidity opportunities...");
-        Ok(None)
-    }
     
     /// Search for backrun opportunities using gradient optimizer
     fn search_backrun<DB>(&self, cache_db: &mut CacheDB<DB>, evm_config: &OpEvmConfig<OpChainSpec, OpPrimitives>, timing_tracker: &Option<TimingTracker>) -> eyre::Result<Option<MevOpportunity>>
@@ -239,27 +183,20 @@ impl MevTaskWorker {
         DB: revm::Database + revm::DatabaseRef + std::fmt::Debug,
         <DB as revm::DatabaseRef>::Error: Send + Sync + 'static,
     {
-        println!("   🏃 Searching for backrun opportunities...");
+        // Get the specific config for this worker (based on strategy name)
+        let config_name = match &self.strategy {
+            MevStrategy::Backrun(config) => config,
+            _ => return Ok(None), // Should never happen
+        };
+        
+        println!("   🏃 Worker searching for backrun opportunity: {}", config_name);
         
         // Create a backrun analyzer
-        let analyzer = BackrunAnalyzer::new(alloy_primitives::U256::from(1_000_000_000_000_000u64)); // 0.001 ETH min profit
+        let analyzer = BackrunAnalyzer::new(alloy_primitives::U256::from(10_000_000_000_000u64)); // 0.00001 ETH (10 microether) min profit
         
-        // Check which configs are triggered by the state changes
-        let triggered_configs = analyzer.analyze_state_for_backrun(&self.state_snapshot);
-        
-        if triggered_configs.is_empty() {
-            println!("   ❌ No backrun opportunities detected");
-            return Ok(None);
-        }
-        
-        println!("   🎯 Triggered {} backrun configs: {:?}", triggered_configs.len(), triggered_configs);
-        
-        // For now, just try the first triggered config
-        // TODO: Try all configs in parallel
-        if let Some(config_name) = triggered_configs.first() {
-            // Get the config
-            let configs = analyzer.get_configs();
-            if let Some(config) = configs.get(config_name) {
+        // Get the configs
+        let configs = analyzer.get_configs();
+        if let Some(config) = configs.get(config_name) {
                 // Check if contract exists in CacheDB
                 let contract_info = cache_db.basic(config.contract_address)?;
                 println!("   🔍 Target contract {} status:", config.contract_address);
@@ -283,13 +220,22 @@ impl MevTaskWorker {
                     }
                 }
                 
+                // Calculate bounds based on initial quantity (matching TypeScript logic)
+                let min_qty = (config.default_value / alloy_primitives::U256::from(100)).max(alloy_primitives::U256::from(1)); // max(1, 1% of initial)
+                let max_qty_uncapped = config.default_value.saturating_mul(alloy_primitives::U256::from(100)); // 100x initial
+                let max_qty = if max_qty_uncapped > alloy_primitives::U256::from(0xffffff) {
+                    alloy_primitives::U256::from(0xffffff) // Cap at 16.7M (24-bit max)
+                } else {
+                    max_qty_uncapped
+                };
+                
                 // Create gradient parameters
                 let params = GradientParams {
                     initial_qty: config.default_value,
                     calldata_template: alloy_primitives::Bytes::from(vec![0x00, 0x00, 0x00, 0x00]), // Short format
                     seed: alloy_primitives::U256::from(self.state_snapshot.block_number * 1000 + self.state_snapshot.flashblock_index as u64),
-                    lower_bound: alloy_primitives::U256::from(10),
-                    upper_bound: alloy_primitives::U256::from(100_000_000), // 100M
+                    lower_bound: min_qty,
+                    upper_bound: max_qty,
                     target_address: config.contract_address,
                 };
                 
@@ -355,7 +301,6 @@ impl MevTaskWorker {
                     }
                 }
             }
-        }
         
         Ok(None)
     }
@@ -403,6 +348,65 @@ where
             Err(e) => {
                 println!("   ❌ MEV task error: {:?}", e);
             }
+        }
+    });
+}
+
+/// Spawn multiple MEV tasks in batch for reduced overhead
+pub fn spawn_mev_tasks_batch<P>(
+    chain_spec: Arc<OpChainSpec>,
+    provider: P,
+    strategies: Vec<MevStrategy>,
+    state_snapshot: FlashblockStateSnapshot,
+    flashblock_received_at: std::time::Instant,
+    result_tx: tokio::sync::mpsc::Sender<MevOpportunity>,
+    timing_tracker: Option<TimingTracker>,
+)
+where
+    P: StateProviderFactory + reth_provider::HeaderProvider + reth_provider::BlockReader + Clone + Send + 'static,
+    P::Header: alloy_consensus::BlockHeader,
+{
+    // Convert to Arc to share across tasks without cloning
+    let state_snapshot = Arc::new(state_snapshot);
+    
+    // Spawn all tasks with a single batch operation
+    let handles: Vec<_> = strategies.into_iter().map(|strategy| {
+        let chain_spec = chain_spec.clone();
+        let provider = provider.clone();
+        let state_snapshot = state_snapshot.clone();
+        let result_tx = result_tx.clone();
+        let timing_tracker = timing_tracker.clone();
+        
+        tokio::spawn(async move {
+            let worker = MevTaskWorker::new(
+                chain_spec,
+                strategy,
+                (*state_snapshot).clone(), // Only clone when actually needed
+                flashblock_received_at,
+                timing_tracker,
+            );
+            
+            match worker.execute(provider).await {
+                Ok(Some(opportunity)) => {
+                    println!("   💰 MEV opportunity found!");
+                    if let Err(e) = result_tx.send(opportunity).await {
+                        println!("   ❌ Failed to send MEV opportunity: {:?}", e);
+                    }
+                }
+                Ok(None) => {
+                    // No opportunity found
+                }
+                Err(e) => {
+                    println!("   ❌ MEV task error: {:?}", e);
+                }
+            }
+        })
+    }).collect();
+    
+    // Optionally join all tasks to track completion
+    tokio::spawn(async move {
+        for handle in handles {
+            let _ = handle.await;
         }
     });
 }
