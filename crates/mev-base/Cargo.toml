@@ -133,6 +133,9 @@ tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
 deadpool-postgres = "0.14"
 postgres-types = { version = "0.2", features = ["derive", "with-chrono-0_4"] }
 
+# Redis
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", branch = "main" }
 brotli = "8.0.1"
 crossbeam = "0.8"

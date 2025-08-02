@@ -81,6 +81,13 @@
 - Capped at 1 gwei maximum to prevent overpaying
 - Includes slight randomization (subtract 0-25k wei) to avoid detection patterns
 
+### Redis Transaction Broadcasting
+- Transactions are now broadcast to Redis concurrently with sequencer submission
+- Redis channel: `baseTransactionBroadcast` 
+- Enables distributed MEV bot network to share transactions
+- Handles race conditions gracefully: if sequencer reports "already known" but Redis succeeded, considers it a success
+- Redis connection is initialized asynchronously to not block startup
+
 ## Architecture Updates
 
 ### Parallel Backrun Workers
