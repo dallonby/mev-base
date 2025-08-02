@@ -307,7 +307,6 @@ def scan_for_transfer_point(start_tx_hash: str):
     if isinstance(tx_type, str) and tx_type.startswith('0x'):
         tx_type = int(tx_type, 16)
     print(f"  Type: {tx_type}")
-    print(f"  Effective Gas Price: {effective_gas_price} wei ({effective_gas_price / 1e9:.4f} gwei)")
     
     # Start scanning backwards from the transaction index
     print(f"\nScanning backwards from index {tx_index}...")
@@ -359,7 +358,12 @@ def scan_for_transfer_point(start_tx_hash: str):
                                     if isinstance(tx_type_at_idx, str) and tx_type_at_idx.startswith('0x'):
                                         tx_type_at_idx = int(tx_type_at_idx, 16)
                                     print(f"  Type: {tx_type_at_idx}")
-                                    print(f"  Effective Gas Price: {effective_gas_price_at_idx} wei ({effective_gas_price_at_idx / 1e9:.4f} gwei)")
+                                    
+                                    # Print gas price comparison on a single line
+                                    print(f"\n💰 Gas Price Comparison:")
+                                    print(f"  Original tx: {effective_gas_price:,} wei ({effective_gas_price / 1e9:.4f} gwei)")
+                                    print(f"  Found tx:    {effective_gas_price_at_idx:,} wei ({effective_gas_price_at_idx / 1e9:.4f} gwei)")
+                                    print(f"  Difference:  {effective_gas_price_at_idx - effective_gas_price:,} wei ({(effective_gas_price_at_idx - effective_gas_price) / 1e9:.4f} gwei)")
                                     
                                     # Query database for this transaction
                                     db_info_found = query_transaction_timestamp(tx_hash_at_idx)

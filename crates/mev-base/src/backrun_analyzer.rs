@@ -98,6 +98,19 @@ impl BackrunAnalyzer {
         // Port all the configs from processorConfigs.ts
         let configs = vec![
             TokenPairProcessorConfig {
+                name: "WethUsdcUsdbc".to_string(),
+                tokens: vec![],
+                accounts: vec![
+                    // Convert token addresses
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca").unwrap()),
+                ],
+                // Convert contract address
+                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x54b0461f0Bc23698777fDF37a79C28019fda5DdE").unwrap()),
+                default_value: U256::from(4500),
+                data_format: "short".to_string(),
+            },
+            TokenPairProcessorConfig {
                 name: "WethAeroSpectre".to_string(),
                 tokens: vec![],
                 accounts: vec![
