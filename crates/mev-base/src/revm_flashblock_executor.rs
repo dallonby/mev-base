@@ -1,4 +1,4 @@
-use alloy_consensus::{TxEnvelope, Transaction as _, transaction::SignerRecoverable, BlockHeader};
+use alloy_consensus::{TxEnvelope, Transaction as _, transaction::SignerRecoverable, BlockHeader, TxEip4844Variant};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::TxKind;
 use alloy_rpc_types_eth::{BlockId, EthCallResponse};
@@ -265,7 +265,28 @@ impl RevmFlashblockExecutor {
                 tx_env.gas_price = tx.max_fee_per_gas();
                 // Access list would be set here if TxEnv supported it
             }
-            _ => return Err(eyre::eyre!("Unsupported transaction type")),
+            TxEnvelope::Eip4844(tx) => {
+                // EIP-4844 blob transactions (used for data availability)
+                // Extract the actual transaction from the variant
+                match tx.tx() {
+                    alloy_consensus::TxEip4844Variant::TxEip4844(inner_tx) => {
+                        tx_env.gas_priority_fee = inner_tx.max_priority_fee_per_gas();
+                        tx_env.gas_price = inner_tx.max_fee_per_gas();
+                        // Blob transactions have blob_hashes but we don't need them for MEV simulation
+                    }
+                    alloy_consensus::TxEip4844Variant::TxEip4844WithSidecar(inner_tx) => {
+                        tx_env.gas_priority_fee = inner_tx.tx().max_priority_fee_per_gas();
+                        tx_env.gas_price = inner_tx.tx().max_fee_per_gas();
+                        // Sidecar contains the actual blob data, not needed for MEV
+                    }
+                }
+            }
+            TxEnvelope::Eip7702(tx) => {
+                // EIP-7702 is for account abstraction/delegation transactions
+                tx_env.gas_priority_fee = tx.max_priority_fee_per_gas();
+                tx_env.gas_price = tx.max_fee_per_gas();
+                // Authority list would be handled here if needed
+            }
         }
         
         Ok(tx_env)
