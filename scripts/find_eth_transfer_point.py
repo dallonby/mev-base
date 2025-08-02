@@ -319,17 +319,22 @@ def scan_for_transfer_point(start_tx_hash: str):
                         print(f"\n" + "="*80)
                         print(f"ORIGINAL TX: {start_tx_hash}")
                         print(f"WINNER TX:   {tx_hash_at_idx}")
+                        print(f"WINNER TO:   {tx_details_at_idx.get('to', 'N/A')}")
                         print(f"-"*80)
                         
                         if db_info:
                             print(f"ORIGINAL TIMESTAMP: {db_info['first_seen']}")
+                            print(f"ORIGINAL SOURCE:    {', '.join(db_info['sources'])}")
                         else:
                             print(f"ORIGINAL TIMESTAMP: Not found in database")
+                            print(f"ORIGINAL SOURCE:    N/A")
                         
                         if db_info_found:
                             print(f"WINNER TIMESTAMP:   {db_info_found['first_seen']}")
+                            print(f"WINNER SOURCE:      {', '.join(db_info_found['sources'])}")
                         else:
                             print(f"WINNER TIMESTAMP:   Not found in database")
+                            print(f"WINNER SOURCE:      N/A")
                         
                         if db_info and db_info_found:
                             time_diff = db_info_found['first_seen'] - db_info['first_seen']
