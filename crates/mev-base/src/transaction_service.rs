@@ -188,12 +188,12 @@ impl TransactionService {
         // Calculate gas pricing from actual block header
         let base_fee = header.base_fee_per_gas().unwrap_or(1_000_000) as u128;
         
-        // Dynamic priority fee: allocate 5% of profit to gas fees
+        // Dynamic priority fee: allocate 15% of profit to gas fees
         let priority_fee = if let Some(simulated_gas) = opportunity.simulated_gas_used {
             if simulated_gas > 0 {
-                // 5% of profit allocated to fees, divided by gas used = priority fee per gas
+                // 15% of profit allocated to fees, divided by gas used = priority fee per gas
                 let profit_wei = opportunity.expected_profit.as_limbs()[0] as u128;
-                let fee_budget = profit_wei / 20; // 5% = 1/20
+                let fee_budget = profit_wei * 15 / 100; // 15%
                 let priority_per_gas = fee_budget / (simulated_gas as u128);
                 
                 // Cap at a reasonable maximum (e.g., 1 gwei) to avoid overpaying
@@ -223,7 +223,7 @@ impl TransactionService {
             multiplier = self.config.gas_multiplier,
             max_fee_per_gas_wei = max_fee_per_gas,
             max_fee_per_gas_gwei = max_fee_per_gas as f64 / 1e9,
-            profit_allocation = "5%",
+            profit_allocation = "15%",
             simulated_gas = ?opportunity.simulated_gas_used,
             expected_profit_wei = %opportunity.expected_profit,
             "Calculated dynamic gas pricing"

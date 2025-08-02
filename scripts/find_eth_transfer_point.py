@@ -271,18 +271,6 @@ def trace_at_index(block_number: int, tx_index: int, from_addr: str, to_addr: st
 
 def scan_for_transfer_point(start_tx_hash: str):
     """Scan backwards to find where transfers exceed msg.value."""
-    print(f"Getting transaction details from: {start_tx_hash}")
-    
-    # Query database for when we first saw this transaction
-    db_info = query_transaction_timestamp(start_tx_hash)
-    if db_info:
-        print(f"\n📊 Database info for original transaction:")
-        print(f"  First seen: {db_info['first_seen']}")
-        print(f"  Sources: {', '.join(db_info['sources'])}")
-        print(f"  Block: {db_info['block_number']}")
-    else:
-        print(f"\n⚠️  Transaction {start_tx_hash} not found in database")
-    
     # Get the original transaction details
     tx_details = get_tx_details(start_tx_hash)
     from_addr = tx_details.get("from", "")
@@ -295,24 +283,13 @@ def scan_for_transfer_point(start_tx_hash: str):
     # Calculate effective gas price for original transaction
     effective_gas_price = get_effective_gas_price(tx_details)
     
-    print(f"\nOriginal transaction details:")
-    print(f"  Hash: {start_tx_hash}")
-    print(f"  Block: {block_num}")
-    print(f"  Index: {tx_index}")
-    print(f"  From: {from_addr}")
-    print(f"  To: {to_addr}")
-    print(f"  Value: {msg_value} wei ({msg_value / 1e18:.9f} ETH)")
-    print(f"  Calldata: {calldata[:10]}... ({len(calldata)-2} hex chars)")
-    tx_type = tx_details.get('type', 0)
-    if isinstance(tx_type, str) and tx_type.startswith('0x'):
-        tx_type = int(tx_type, 16)
-    print(f"  Type: {tx_type}")
+    # Query database for when we first saw this transaction
+    db_info = query_transaction_timestamp(start_tx_hash)
     
     # Start scanning backwards from the transaction index
-    print(f"\nScanning backwards from index {tx_index}...")
+    print(f"\nScanning block {block_num} backwards from index {tx_index}...", end='', flush=True)
     
     found = False
-    last_transferred = 0
     
     # Scan backwards through transaction indices
     for idx in range(tx_index, -1, -1):
@@ -322,75 +299,53 @@ def scan_for_transfer_point(start_tx_hash: str):
                 block_num, idx, from_addr, to_addr, calldata, msg_value
             )
             
-            if transferred > 0:
-                # Check if the transfer amount changed
-                if transferred != last_transferred:
-                    print(f"\nIndex {idx}: Transfer amount = {transferred} wei ({transferred / 1e18:.9f} ETH)")
-                    last_transferred = transferred
-                    
-                    if transferred > msg_value:
-                        print(f"  ✅ Exceeds msg.value by {transferred - msg_value} wei")
-                        if not found:
-                            found = True
-                            print(f"\n🎯 FIRST OCCURRENCE where transfers exceed msg.value:")
-                            print(f"  Block: {block_num}")
-                            print(f"  Transaction Index: {idx}")
-                            print(f"  Excess: {transferred - msg_value} wei ({(transferred - msg_value) / 1e18:.9f} ETH)")
-                            
-                            # Get the transaction hash at this index
-                            try:
-                                block_txs = get_block_txs(block_num)
-                                if idx < len(block_txs):
-                                    tx_hash_at_idx = block_txs[idx]
-                                    print(f"\n📍 Transaction at index {idx}:")
-                                    print(f"  Hash: {tx_hash_at_idx}")
-                                    
-                                    # Get details of this transaction
-                                    tx_details_at_idx = get_tx_details(tx_hash_at_idx)
-                                    effective_gas_price_at_idx = get_effective_gas_price(tx_details_at_idx)
-                                    
-                                    print(f"  From: {tx_details_at_idx.get('from', 'N/A')}")
-                                    print(f"  To: {tx_details_at_idx.get('to', 'N/A')}")
-                                    print(f"  Value: {int(tx_details_at_idx.get('value', '0x0'), 16)} wei")
-                                    input_data = tx_details_at_idx.get('input', '0x')
-                                    print(f"  Method: {input_data[:10] if len(input_data) >= 10 else input_data}")
-                                    tx_type_at_idx = tx_details_at_idx.get('type', 0)
-                                    if isinstance(tx_type_at_idx, str) and tx_type_at_idx.startswith('0x'):
-                                        tx_type_at_idx = int(tx_type_at_idx, 16)
-                                    print(f"  Type: {tx_type_at_idx}")
-                                    
-                                    # Print gas price comparison on a single line
-                                    print(f"\n💰 Gas Price Comparison:")
-                                    print(f"  Original tx: {effective_gas_price:,} wei ({effective_gas_price / 1e9:.4f} gwei)")
-                                    print(f"  Found tx:    {effective_gas_price_at_idx:,} wei ({effective_gas_price_at_idx / 1e9:.4f} gwei)")
-                                    print(f"  Difference:  {effective_gas_price_at_idx - effective_gas_price:,} wei ({(effective_gas_price_at_idx - effective_gas_price) / 1e9:.4f} gwei)")
-                                    
-                                    # Query database for this transaction
-                                    db_info_found = query_transaction_timestamp(tx_hash_at_idx)
-                                    if db_info_found:
-                                        print(f"\n📊 Database info for found transaction:")
-                                        print(f"  First seen: {db_info_found['first_seen']}")
-                                        print(f"  Sources: {', '.join(db_info_found['sources'])}")
-                                        
-                                        # Calculate time difference if both transactions are in DB
-                                        if db_info and db_info_found:
-                                            time_diff = db_info_found['first_seen'] - db_info['first_seen']
-                                            print(f"  Time difference: {time_diff.total_seconds():.3f} seconds")
-                                            if time_diff.total_seconds() < 0:
-                                                print(f"  ⚠️  Found transaction was seen BEFORE original transaction!")
-                                    else:
-                                        print(f"\n⚠️  Transaction {tx_hash_at_idx} not found in database")
-                            except Exception as e:
-                                print(f"\nError getting transaction at index {idx}: {e}")
-                            
-                            # Stop scanning
-                            return
-                    else:
-                        print(f"  ❌ Does not exceed msg.value")
-            
-            if idx % 10 == 0:
-                print(f"  Scanning index {idx}...", end='\r')
+            if transferred > msg_value and not found:
+                found = True
+                print(f" found at index {idx}!")
+                # Get the transaction hash at this index
+                try:
+                    block_txs = get_block_txs(block_num)
+                    if idx < len(block_txs):
+                        tx_hash_at_idx = block_txs[idx]
+                        
+                        # Get details of this transaction
+                        tx_details_at_idx = get_tx_details(tx_hash_at_idx)
+                        effective_gas_price_at_idx = get_effective_gas_price(tx_details_at_idx)
+                        
+                        # Query database for this transaction
+                        db_info_found = query_transaction_timestamp(tx_hash_at_idx)
+                        
+                        # Print distilled results
+                        print(f"\n" + "="*80)
+                        print(f"ORIGINAL TX: {start_tx_hash}")
+                        print(f"WINNER TX:   {tx_hash_at_idx}")
+                        print(f"-"*80)
+                        
+                        if db_info:
+                            print(f"ORIGINAL TIMESTAMP: {db_info['first_seen']}")
+                        else:
+                            print(f"ORIGINAL TIMESTAMP: Not found in database")
+                        
+                        if db_info_found:
+                            print(f"WINNER TIMESTAMP:   {db_info_found['first_seen']}")
+                        else:
+                            print(f"WINNER TIMESTAMP:   Not found in database")
+                        
+                        if db_info and db_info_found:
+                            time_diff = db_info_found['first_seen'] - db_info['first_seen']
+                            print(f"TIME DIFFERENCE:    {time_diff.total_seconds():.3f} seconds")
+                        
+                        print(f"-"*80)
+                        print(f"ORIGINAL GAS PRICE: {effective_gas_price:,} wei ({effective_gas_price / 1e9:.4f} gwei)")
+                        print(f"WINNER GAS PRICE:   {effective_gas_price_at_idx:,} wei ({effective_gas_price_at_idx / 1e9:.4f} gwei)")
+                        print(f"GAS DIFFERENCE:     {effective_gas_price_at_idx - effective_gas_price:,} wei ({(effective_gas_price_at_idx - effective_gas_price) / 1e9:.4f} gwei)")
+                        print(f"="*80)
+                except Exception as e:
+                    print(f"\nError getting transaction at index {idx}: {e}")
                 
+                # Stop scanning
+                return
+            
         except Exception as e:
             # Skip indices that fail to trace silently
             continue

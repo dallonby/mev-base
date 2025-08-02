@@ -75,6 +75,12 @@
 - Only production Backrun strategy remains
 - Removed unused gradient logging code
 
+### Dynamic Priority Fee
+- MEV bots now allocate 15% of expected profit to gas fees (updated from 5%)
+- Priority fee = (expected_profit * 15%) / simulated_gas_used
+- Capped at 1 gwei maximum to prevent overpaying
+- Includes slight randomization (subtract 0-25k wei) to avoid detection patterns
+
 ## Architecture Updates
 
 ### Parallel Backrun Workers
