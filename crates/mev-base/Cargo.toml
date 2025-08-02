@@ -133,7 +133,7 @@ brotli = "8.0.1"
 crossbeam = "0.8"
 rayon = "1.10"
 
-dashmap = { version = "6.1", optional = true }
+dashmap = { version = "6.1" }
 nanoid = { version = "0.4", optional = true }
 reth-ipc = { workspace = true, optional = true }
 tar = { version = "0.4", optional = true }
@@ -182,7 +182,6 @@ min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
 
 testing = [
-    "dashmap",
     "nanoid",
     "reth-ipc",
     "reth-node-builder/test-utils",
@@ -203,3 +202,7 @@ path = "src/main.rs"
 [[bin]]
 name = "test-sequencer"
 path = "src/bin/test_sequencer.rs"
+
+[[bin]]
+name = "test-address-converter"
+path = "src/bin/test_address_converter.rs"

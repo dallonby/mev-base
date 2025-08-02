@@ -18,7 +18,6 @@ use crate::transaction_service::{TransactionService, TransactionServiceConfig, W
 use crate::wallet_service::WalletService;
 use crate::sequencer_service::SequencerService;
 
-mod benchmark_worker;
 mod lifecycle_timing;
 mod flashblocks;
 mod flashblock_state;
@@ -30,11 +29,12 @@ mod revm_flashblock_executor;
 mod gradient_descent;
 mod gradient_descent_parallel;
 mod gradient_descent_fast;
-mod backrun_analyzer;
+pub mod backrun_analyzer;
 mod logging;
 mod transaction_service;
 mod wallet_service;
 mod sequencer_service;
+mod metrics;
 
 /// Block subscriber ExEx that echoes block numbers
 async fn block_subscriber_exex<Node: FullNodeComponents>(
@@ -148,6 +148,9 @@ fn main() -> eyre::Result<()> {
                     "Flashblocks event received"
                 );
                 
+                // Increment metrics
+                crate::metrics::MEV_METRICS.flashblocks_received_total.increment(1);
+                
                 // Queue the event for processing
                 if let Err(e) = flashblock_tx.send(event).await {
                     error!(error = %e, "Failed to queue flashblock");
@@ -229,24 +232,27 @@ fn main() -> eyre::Result<()> {
             "Transaction service initialized"
         );
         
+        // Define minimum profit threshold from env or default (before spawning tasks)
+        let min_profit_threshold = std::env::var("MEV_MIN_PROFIT_THRESHOLD")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(alloy_primitives::U256::from)
+            .unwrap_or_else(|| alloy_primitives::U256::from(10_000_000_000_000u64)); // Default: 0.00001 ETH (10 microether)
+        
+        info!(
+            threshold_wei = %min_profit_threshold,
+            threshold_eth = format!("{:.6}", min_profit_threshold.as_limbs()[0] as f64 / 1e18),
+            "MEV profit threshold configured"
+        );
+        
+        // Clone for the MEV handler task
+        let threshold_for_handler = min_profit_threshold;
+        
         // Clone provider for MEV handler
         let mev_provider = blockchain_provider.clone();
         
         // Spawn MEV opportunity handler with JSON logging
         tokio::spawn(async move {
-            // Define minimum profit threshold from env or default
-            let min_profit_threshold = std::env::var("MEV_MIN_PROFIT_THRESHOLD")
-                .ok()
-                .and_then(|s| s.parse::<u64>().ok())
-                .map(alloy_primitives::U256::from)
-                .unwrap_or_else(|| alloy_primitives::U256::from(10_000_000_000_000u64)); // Default: 0.00001 ETH (10 microether)
-            
-            info!(
-                threshold_wei = %min_profit_threshold,
-                threshold_eth = format!("{:.6}", min_profit_threshold.as_limbs()[0] as f64 / 1e18),
-                "MEV profit threshold configured"
-            );
-            
             while let Some(opportunity) = mev_result_rx.recv().await {
                 info!(
                     strategy = %opportunity.strategy,
@@ -257,8 +263,12 @@ fn main() -> eyre::Result<()> {
                     "MEV opportunity found"
                 );
                 
+                // Record opportunity metrics
+                crate::metrics::MEV_METRICS.opportunities_found_total.increment(1);
+                
                 // Log to JSON if profit exceeds threshold
-                if opportunity.expected_profit > min_profit_threshold {
+                if opportunity.expected_profit > threshold_for_handler {
+                    crate::metrics::MEV_METRICS.opportunities_profitable_total.increment(1);
                     if let Err(e) = log_mev_opportunity_to_json(&opportunity) {
                         error!(error = ?e, "Failed to log MEV opportunity to JSON");
                     }
@@ -289,7 +299,7 @@ fn main() -> eyre::Result<()> {
                     debug!(
                         strategy = %opportunity.strategy,
                         profit_wei = %opportunity.expected_profit,
-                        threshold_wei = %min_profit_threshold,
+                        threshold_wei = %threshold_for_handler,
                         "MEV opportunity below profit threshold, skipping"
                     );
                 }
@@ -316,6 +326,10 @@ fn main() -> eyre::Result<()> {
                     event.index,
                 );
                 timing.processing_started = Some(sim_start);
+                
+                // Record queue latency metric
+                let queue_latency = sim_start.duration_since(event.received_at).as_secs_f64();
+                crate::metrics::MEV_METRICS.flashblock_queue_latency_seconds.record(queue_latency);
                 
                 // Clone for workers
                 let timing_for_workers = Arc::new(tokio::sync::Mutex::new(Some(timing.clone())));
@@ -359,8 +373,10 @@ fn main() -> eyre::Result<()> {
                             "Revm execution complete"
                         );
                         
-                        // Update timing
+                        // Update timing and record metric
                         timing.execution_completed = Some(std::time::Instant::now());
+                        let exec_duration = timing.execution_completed.unwrap().duration_since(timing.processing_started.unwrap()).as_secs_f64();
+                        crate::metrics::MEV_METRICS.flashblock_execution_duration_seconds.record(exec_duration);
                         
                         // Export state snapshot and trigger MEV search
                         let export_start = std::time::Instant::now();
@@ -373,8 +389,10 @@ fn main() -> eyre::Result<()> {
                                     "State snapshot exported"
                                 );
                                 
-                                // Update timing
+                                // Update timing and record metric
                                 timing.state_export_completed = Some(std::time::Instant::now());
+                                let export_duration = export_start.elapsed().as_secs_f64();
+                                crate::metrics::MEV_METRICS.state_export_duration_seconds.record(export_duration);
                                 
                                 // Analyze state to determine which strategies to trigger
                                 let strategies = mev_search_worker::analyze_state_for_strategies(&state_snapshot);
@@ -396,30 +414,14 @@ fn main() -> eyre::Result<()> {
                                         event.received_at,
                                         mev_result_tx.clone(),
                                         Some(timing_for_workers.clone()),
+                                        min_profit_threshold,
                                     );
                                     timing.workers_spawned = Some(std::time::Instant::now());
                                 } else {
                                     debug!("No MEV strategies triggered for this flashblock");
                                 }
                                 
-                                // Run benchmark on the 3rd flashblock of each block
-                                if event.index == 2 && current_block > 0 {
-                                    debug!("Running worker overhead benchmark");
-                                    let bench_provider = blockchain_provider_for_task.clone();
-                                    let bench_spec = chain_spec.clone();
-                                    let bench_snapshot = state_snapshot.clone();
-                                    
-                                    tokio::spawn(async move {
-                                        if let Err(e) = benchmark_worker::benchmark_worker_overhead(
-                                            bench_spec,
-                                            bench_provider,
-                                            bench_snapshot,
-                                            10, // Run 10 iterations
-                                        ).await {
-                                            error!(error = ?e, "Benchmark failed");
-                                        }
-                                    });
-                                }
+                                // Benchmarking removed - no longer needed
                             }
                             Err(e) => {
                                 error!(error = ?e, "Failed to export state snapshot");

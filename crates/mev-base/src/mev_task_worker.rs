@@ -30,6 +30,8 @@ pub struct MevTaskWorker {
     flashblock_received_at: std::time::Instant,
     /// Optional lifecycle timing tracker
     timing_tracker: Option<TimingTracker>,
+    /// Minimum profit threshold for logging
+    min_profit_threshold: alloy_primitives::U256,
 }
 
 impl MevTaskWorker {
@@ -39,6 +41,7 @@ impl MevTaskWorker {
         state_snapshot: FlashblockStateSnapshot,
         flashblock_received_at: std::time::Instant,
         timing_tracker: Option<TimingTracker>,
+        min_profit_threshold: alloy_primitives::U256,
     ) -> Self {
         Self {
             chain_spec,
@@ -46,6 +49,7 @@ impl MevTaskWorker {
             state_snapshot,
             flashblock_received_at,
             timing_tracker,
+            min_profit_threshold,
         }
     }
     
@@ -58,6 +62,17 @@ impl MevTaskWorker {
         let task_start = std::time::Instant::now();
         let latency_ms = self.flashblock_received_at.elapsed().as_secs_f64() * 1000.0;
         debug!(strategy = ?self.strategy, latency_ms = latency_ms, "MEV Task Worker starting search");
+        
+        // Clone the lifecycle timing for this worker
+        let mut worker_timing = if let Some(ref timing_tracker) = self.timing_tracker {
+            if let Ok(tracker) = timing_tracker.try_lock() {
+                tracker.clone()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         
         // Get a fresh state provider - this will hold a database read transaction
         let provider_start = std::time::Instant::now();
@@ -119,12 +134,45 @@ impl MevTaskWorker {
         // Execute the MEV strategy
         let search_start = std::time::Instant::now();
         let result = match self.strategy {
-            MevStrategy::Backrun(_) => self.search_backrun(&mut cache_db, &evm_config, &self.timing_tracker),
+            MevStrategy::Backrun(ref config_name) => self.search_backrun(&mut cache_db, &evm_config, &mut worker_timing),
         };
         let search_time = search_start.elapsed().as_secs_f64() * 1000.0;
         
         let total_time = task_start.elapsed().as_secs_f64() * 1000.0;
-        debug!(total_ms = total_time, search_ms = search_time, "Task completed");
+        
+        // Get strategy name for metrics
+        let strategy_name = match &self.strategy {
+            MevStrategy::Backrun(config) => format!("Backrun_{}", config),
+        };
+        
+        // Record worker duration metric
+        let strategy_metrics = crate::metrics::get_strategy_metrics(&strategy_name);
+        strategy_metrics.worker_duration_seconds.record(total_time / 1000.0);
+        
+        // Log worker-specific timing if we have timing info and found an opportunity
+        if let Some(timing) = worker_timing {
+            if result.is_ok() && result.as_ref().unwrap().is_some() {
+                // Record gradient duration if available
+                if let (Some(start), Some(end)) = (timing.gradient_started, timing.gradient_completed) {
+                    let gradient_duration = end.duration_since(start).as_secs_f64();
+                    strategy_metrics.gradient_duration_seconds.record(gradient_duration);
+                }
+                
+                info!(
+                    strategy = strategy_name,
+                    block = timing.block_number,
+                    flashblock = timing.flashblock_index,
+                    total_ms = total_time,
+                    search_ms = search_time,
+                    gradient_ms = timing.gradient_completed
+                        .and_then(|end| timing.gradient_started.map(|start| end.duration_since(start).as_secs_f64() * 1000.0))
+                        .unwrap_or(0.0),
+                    "Worker completed with opportunity"
+                );
+            }
+        } else {
+            debug!(total_ms = total_time, search_ms = search_time, "Task completed");
+        }
         
         // The state provider (and database transaction) will be dropped here
         result
@@ -181,7 +229,7 @@ impl MevTaskWorker {
     
     
     /// Search for backrun opportunities using gradient optimizer
-    fn search_backrun<DB>(&self, cache_db: &mut CacheDB<DB>, evm_config: &OpEvmConfig<OpChainSpec, OpPrimitives>, timing_tracker: &Option<TimingTracker>) -> eyre::Result<Option<MevOpportunity>>
+    fn search_backrun<DB>(&self, cache_db: &mut CacheDB<DB>, evm_config: &OpEvmConfig<OpChainSpec, OpPrimitives>, worker_timing: &mut Option<crate::lifecycle_timing::LifecycleTiming>) -> eyre::Result<Option<MevOpportunity>>
     where
         DB: revm::Database + revm::DatabaseRef + std::fmt::Debug,
         <DB as revm::DatabaseRef>::Error: Send + Sync + 'static,
@@ -194,8 +242,12 @@ impl MevTaskWorker {
         
         debug!(config = %config_name, "Worker searching for backrun opportunity");
         
-        // Create a backrun analyzer
-        let analyzer = BackrunAnalyzer::new(alloy_primitives::U256::from(10_000_000_000_000u64)); // 0.00001 ETH (10 microether) min profit
+        // Record that this strategy was triggered
+        let strategy_metrics = crate::metrics::get_strategy_metrics(&format!("Backrun_{}", config_name));
+        strategy_metrics.triggered_total.increment(1);
+        
+        // Create a backrun analyzer with the worker's profit threshold
+        let analyzer = BackrunAnalyzer::new(self.min_profit_threshold);
         
         // Get the configs
         let configs = analyzer.get_configs();
@@ -251,35 +303,39 @@ impl MevTaskWorker {
                 // Run gradient optimization - use fast version for speed
                 let optimizer = FastGradientOptimizer::new();
                 
-                // Mark gradient start in timing (if available)
-                if let Some(ref timing) = timing_tracker {
-                    if let Ok(mut t) = timing.try_lock() {
-                        if let Some(ref mut lifecycle) = *t {
-                            lifecycle.gradient_started = Some(std::time::Instant::now());
-                        }
-                    }
+                // Mark gradient start in worker timing
+                if let Some(ref mut timing) = worker_timing {
+                    timing.gradient_started = Some(std::time::Instant::now());
                 }
                 
                 match optimizer.optimize_quantity(params, &self.state_snapshot, cache_db, evm_config) {
                     Ok(result) => {
-                        // Mark gradient completion in timing
-                        if let Some(ref timing) = timing_tracker {
-                            if let Ok(mut t) = timing.try_lock() {
-                                if let Some(ref mut lifecycle) = *t {
-                                    lifecycle.gradient_completed = Some(std::time::Instant::now());
-                                    
-                                    // Print timing report
-                                    trace!("{}", lifecycle.generate_report());
-                                }
-                            }
+                        // Mark gradient completion in worker timing
+                        if let Some(ref mut timing) = worker_timing {
+                            timing.gradient_completed = Some(std::time::Instant::now());
                         }
                         
                         if result.delta > 0 {
-                            info!(
-                                profit_wei = result.delta,
-                                profit_eth = (result.delta as f64 / 1e18),
-                                "Found profitable backrun"
-                            );
+                            let profit = alloy_primitives::U256::from(result.delta as u128);
+                            
+                            // Record profit metric
+                            strategy_metrics.profit_wei.record(result.delta as f64);
+                            
+                            // Only log at info level if above threshold
+                            if profit > self.min_profit_threshold {
+                                strategy_metrics.profitable_total.increment(1);
+                                info!(
+                                    profit_wei = result.delta,
+                                    profit_eth = (result.delta as f64 / 1e18),
+                                    "Found profitable backrun"
+                                );
+                            } else {
+                                debug!(
+                                    profit_wei = result.delta,
+                                    profit_eth = (result.delta as f64 / 1e18),
+                                    "Found backrun below threshold"
+                                );
+                            }
                             
                             // Bot address for MEV execution
                             let bot_address = alloy_primitives::Address::from([0xc0, 0xff, 0xee, 0x48, 0x94, 0x5a, 0x95, 0x18, 
@@ -475,6 +531,7 @@ pub fn spawn_mev_task<P>(
     flashblock_received_at: std::time::Instant,
     result_tx: tokio::sync::mpsc::Sender<MevOpportunity>,
     timing_tracker: Option<TimingTracker>,
+    min_profit_threshold: alloy_primitives::U256,
 )
 where
     P: StateProviderFactory + reth_provider::HeaderProvider + reth_provider::BlockReader + Clone + Send + 'static,
@@ -487,11 +544,17 @@ where
             state_snapshot,
             flashblock_received_at,
             timing_tracker,
+            min_profit_threshold,
         );
         
         match worker.execute(provider).await {
             Ok(Some(opportunity)) => {
-                info!("MEV opportunity found");
+                // Only log at info level if above threshold
+                if opportunity.expected_profit > min_profit_threshold {
+                    info!("MEV opportunity found");
+                } else {
+                    debug!("MEV opportunity found below threshold");
+                }
                 if let Err(e) = result_tx.send(opportunity).await {
                     error!(error = ?e, "Failed to send MEV opportunity");
                 }
@@ -515,6 +578,7 @@ pub fn spawn_mev_tasks_batch<P>(
     flashblock_received_at: std::time::Instant,
     result_tx: tokio::sync::mpsc::Sender<MevOpportunity>,
     timing_tracker: Option<TimingTracker>,
+    min_profit_threshold: alloy_primitives::U256,
 )
 where
     P: StateProviderFactory + reth_provider::HeaderProvider + reth_provider::BlockReader + Clone + Send + 'static,
@@ -538,11 +602,17 @@ where
                 (*state_snapshot).clone(), // Only clone when actually needed
                 flashblock_received_at,
                 timing_tracker,
+                min_profit_threshold,
             );
             
             match worker.execute(provider).await {
                 Ok(Some(opportunity)) => {
-                    info!("MEV opportunity found");
+                    // Only log at info level if above threshold
+                    if opportunity.expected_profit > min_profit_threshold {
+                        info!("MEV opportunity found");
+                    } else {
+                        debug!("MEV opportunity found below threshold");
+                    }
                     if let Err(e) = result_tx.send(opportunity).await {
                         error!(error = ?e, "Failed to send MEV opportunity");
                     }

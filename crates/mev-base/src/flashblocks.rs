@@ -193,12 +193,35 @@ async fn process_payload(
     
     // Convert transactions
     let mut transactions = Vec::new();
-    for tx_bytes in diff.transactions {
+    for (idx, tx_bytes) in diff.transactions.iter().enumerate() {
         // Parse transaction bytes using RLP decoding
         match TxEnvelope::decode(&mut tx_bytes.as_ref()) {
             Ok(tx) => transactions.push(tx),
             Err(e) => {
-                warn!("Failed to decode transaction: {}", e);
+                // Get the first byte to identify transaction type
+                let tx_type = if !tx_bytes.is_empty() {
+                    format!("0x{:02x}", tx_bytes[0])
+                } else {
+                    "empty".to_string()
+                };
+                
+                // Get first few bytes for debugging
+                let preview = if tx_bytes.len() > 10 {
+                    format!("0x{}", hex::encode(&tx_bytes[..10]))
+                } else {
+                    format!("0x{}", hex::encode(tx_bytes))
+                };
+                
+                warn!(
+                    block = block_number,
+                    flashblock = payload.index,
+                    tx_index = idx,
+                    tx_type = tx_type,
+                    tx_preview = preview,
+                    tx_len = tx_bytes.len(),
+                    error = %e,
+                    "Failed to decode transaction"
+                );
             }
         }
     }
