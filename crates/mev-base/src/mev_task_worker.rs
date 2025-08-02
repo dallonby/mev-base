@@ -1,4 +1,4 @@
-use alloy_consensus::BlockHeader;
+use alloy_consensus::{BlockHeader, SignableTransaction};
 use reth_provider::StateProviderFactory;
 use reth_revm::{database::StateProviderDatabase, db::CacheDB};
 use revm::database::{DbAccount, AccountState};
@@ -360,12 +360,42 @@ impl MevTaskWorker {
                                 }
                             };
                             
-                            // Calculate bribe value based on actual gas used
-                            let bribe_value = self.encode_transaction_value(gas_used, 500);
+                            // Check ERC20 balance if configured
+                            let balance_check_value = if let Some((erc20_token, check_address)) = config.check_balance_of {
+                                match self.get_erc20_balance(cache_db, erc20_token, check_address) {
+                                    Ok(balance) => {
+                                        // Take bottom 2 bytes of balance
+                                        let balance_u16 = (balance.as_limbs()[0] & 0xffff) as u16;
+                                        debug!(
+                                            erc20 = %erc20_token,
+                                            address = %check_address,
+                                            full_balance = %balance,
+                                            encoded_balance = balance_u16,
+                                            "ERC20 balance check performed"
+                                        );
+                                        balance_u16
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            erc20 = %erc20_token,
+                                            address = %check_address,
+                                            error = ?e,
+                                            "Failed to check ERC20 balance, using default"
+                                        );
+                                        500 // Default bribe rate on error
+                                    }
+                                }
+                            } else {
+                                500 // Default bribe rate when no balance check configured
+                            };
+                            
+                            // Calculate bribe value based on actual gas used and balance check
+                            let bribe_value = self.encode_transaction_value(gas_used, balance_check_value);
                             debug!(
                                 gas_used = gas_used,
                                 bribe_value = %bribe_value,
-                                "Calculated bribe value from gas simulation"
+                                balance_check_value = balance_check_value,
+                                "Calculated bribe value from gas simulation and balance check"
                             );
                             
                             // Create MEV bundle with calculated bribe value
@@ -522,6 +552,175 @@ impl MevTaskWorker {
             Err(e) => {
                 debug!(error = ?e, "Transaction simulation failed");
                 Err(e.into())
+            }
+        }
+    }
+    
+    /// Get ERC20 balance for an address using the existing cache_db
+    fn get_erc20_balance<DB>(
+        &self,
+        cache_db: &mut CacheDB<DB>,
+        token_address: alloy_primitives::Address,
+        check_address: alloy_primitives::Address,
+    ) -> eyre::Result<alloy_primitives::U256>
+    where
+        DB: revm::Database + revm::DatabaseRef + std::fmt::Debug,
+        <DB as revm::DatabaseRef>::Error: Send + Sync + 'static,
+    {
+        // ERC20 balanceOf(address) selector = 0x70a08231
+        let mut calldata = vec![0x70, 0xa0, 0x82, 0x31];
+        // Append the address (padded to 32 bytes)
+        calldata.extend_from_slice(&[0u8; 12]); // 12 zero bytes for padding
+        calldata.extend_from_slice(check_address.as_slice());
+        
+        // Simulate a static call using MEV simulation environment
+        let bot_address = alloy_primitives::Address::from([0xc0, 0xff, 0xee, 0x48, 0x94, 0x5a, 0x95, 0x18, 
+                                                           0xb0, 0xb5, 0x43, 0xa2, 0xc5, 0x9d, 0xfb, 0x10, 
+                                                           0x22, 0x21, 0xfb, 0xb7]);
+        
+        // Fund the bot address if needed
+        match cache_db.basic(bot_address)? {
+            None => {
+                let account_info = revm::state::AccountInfo {
+                    balance: alloy_primitives::U256::from(1_000_000_000_000_000_000u64), // 1 ETH
+                    nonce: 0,
+                    code_hash: alloy_primitives::KECCAK256_EMPTY,
+                    code: None,
+                };
+                
+                cache_db.cache.accounts.insert(bot_address, DbAccount {
+                    info: account_info,
+                    account_state: AccountState::Touched,
+                    storage: Default::default(),
+                });
+            }
+            _ => {}
+        };
+        
+        // Use the simulate_transaction method we already have, but with minimal gas
+        // This will execute the balanceOf call and return the result
+        match self.simulate_balance_query(cache_db, bot_address, token_address, calldata.into()) {
+            Ok(output) => {
+                if output.len() >= 32 {
+                    // Parse the first 32 bytes as U256
+                    let mut balance_bytes = [0u8; 32];
+                    balance_bytes.copy_from_slice(&output[..32]);
+                    let balance = alloy_primitives::U256::from_be_bytes(balance_bytes);
+                    trace!(
+                        token = %token_address,
+                        address = %check_address,
+                        balance = %balance,
+                        "ERC20 balance query successful"
+                    );
+                    Ok(balance)
+                } else {
+                    Err(eyre::eyre!("Invalid balance response length: {}", output.len()))
+                }
+            }
+            Err(e) => {
+                debug!(
+                    token = %token_address,
+                    address = %check_address,
+                    error = ?e,
+                    "ERC20 balance query failed"
+                );
+                Err(e)
+            }
+        }
+    }
+    
+    /// Simulate a balance query call and return the output data
+    fn simulate_balance_query<DB>(
+        &self,
+        cache_db: &mut CacheDB<DB>,
+        from: alloy_primitives::Address,
+        to: alloy_primitives::Address,
+        calldata: alloy_primitives::Bytes,
+    ) -> eyre::Result<Vec<u8>>
+    where
+        DB: revm::Database + revm::DatabaseRef + std::fmt::Debug,
+        <DB as revm::DatabaseRef>::Error: Send + Sync + 'static,
+    {
+        // Get sender info
+        let sender_info = match cache_db.basic(from)? {
+            Some(info) => info,
+            None => {
+                return Err(eyre::eyre!("Sender account not found"));
+            }
+        };
+        
+        // Create dummy signature for simulation
+        let signature = alloy_primitives::Signature::new(
+            alloy_primitives::U256::from(1),
+            alloy_primitives::U256::from(1), 
+            false
+        );
+        
+        // Set up transaction environment
+        let mut tx_env = revm::context::TxEnv::default();
+        tx_env.caller = from;
+        tx_env.nonce = sender_info.nonce;
+        tx_env.kind = revm::primitives::TxKind::Call(to);
+        tx_env.data = calldata.clone();
+        tx_env.gas_limit = 100_000; // Small gas limit for view function
+        tx_env.gas_price = 0; // Static call
+        tx_env.gas_priority_fee = Some(0);
+        tx_env.value = alloy_primitives::U256::ZERO;
+        
+        // Create transaction for Optimism
+        let tx_eip1559 = alloy_consensus::TxEip1559 {
+            chain_id: 8453, // Base mainnet
+            nonce: sender_info.nonce,
+            gas_limit: tx_env.gas_limit,
+            max_fee_per_gas: 0,
+            max_priority_fee_per_gas: 0,
+            to: alloy_primitives::TxKind::Call(to),
+            value: alloy_primitives::U256::ZERO,
+            access_list: Default::default(),
+            input: calldata,
+        };
+        
+        let signed_tx = alloy_consensus::Signed::new_unchecked(tx_eip1559, signature, Default::default());
+        let tx_envelope = alloy_consensus::TxEnvelope::Eip1559(signed_tx);
+        let enveloped_bytes = alloy_eips::eip2718::Encodable2718::encoded_2718(&tx_envelope);
+        
+        let mut op_tx = op_revm::OpTransaction::new(tx_env);
+        op_tx.enveloped_tx = Some(enveloped_bytes.into());
+        
+        // Use MEV-friendly EVM environment for the query
+        let current_timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        
+        let evm_config: OpEvmConfig<OpChainSpec, OpPrimitives> = OpEvmConfig::new(
+            self.chain_spec.clone(),
+            OpRethReceiptBuilder::default(),
+        );
+        
+        let evm_env = evm_config.evm_env(&alloy_consensus::Header {
+            base_fee_per_gas: Some(0),
+            gas_limit: 2_000_000_000,
+            number: self.state_snapshot.block_number,
+            timestamp: current_timestamp,
+            ..Default::default()
+        });
+        
+        // Create EVM for simulation
+        let mut evm = evm_config.evm_with_env(&mut *cache_db, evm_env);
+        
+        // Execute and extract output
+        use reth_evm::Evm;
+        match evm.transact(op_tx) {
+            Ok(result) => {
+                if let Some(output) = result.result.output() {
+                    Ok(output.to_vec())
+                } else {
+                    Err(eyre::eyre!("No output from static call"))
+                }
+            }
+            Err(e) => {
+                Err(eyre::eyre!("Static call execution failed: {:?}", e))
             }
         }
     }

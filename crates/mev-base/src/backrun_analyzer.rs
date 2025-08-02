@@ -14,6 +14,7 @@ pub struct TokenPairProcessorConfig {
     pub contract_address: Address,
     pub default_value: U256,
     pub data_format: String, // "short" or "long"
+    pub check_balance_of: Option<(Address, Address)>, // (erc20_token, address_to_check)
 }
 
 /// Backrun analyzer for monitoring token pair processors
@@ -90,6 +91,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0xe5C17Deb99f15033451b63d2Acf34d840211b3bB").unwrap()),
                 default_value: U256::from(300),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
     */
 
@@ -109,6 +111,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x54b0461f0Bc23698777fDF37a79C28019fda5DdE").unwrap()),
                 default_value: U256::from(4500),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "WethAeroSpectre".to_string(),
@@ -122,6 +125,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x295dc5279B8df362DF8B848276D0A9264512b09F").unwrap()),
                 default_value: U256::from(1000),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "WethUsdcAero".to_string(),
@@ -135,6 +139,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0xdB7FD121983aDD932Afc73a73d869d8096810529").unwrap()),
                 default_value: U256::from(3000),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "WethWgcDegen".to_string(),
@@ -148,6 +153,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x3AfD01d840b36C0cA9Ee4AB75B503f60fE8E7458").unwrap()),
                 default_value: U256::from(1000),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "WethUsdcCbxrp".to_string(),
@@ -161,6 +167,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0xe5C17Deb99f15033451b63d2Acf34d840211b3bB").unwrap()),
                 default_value: U256::from(3000),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "WethUsdc".to_string(),
@@ -172,6 +179,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from([0x38, 0xce, 0xf6, 0x27, 0x79, 0x42, 0xfa, 0xF6, 0x6B, 0x9c, 0xD9, 0xf1, 0xb5, 0x13, 0x2d, 0x68, 0xBA, 0x17, 0x5b, 0x32]),
                 default_value: U256::from(300),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcKtaWeth".to_string(),
@@ -182,6 +190,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from([0xFe, 0x1f, 0x37, 0xaB, 0x84, 0xBb, 0x04, 0x30, 0x0C, 0xB2, 0x6F, 0x8E, 0xf7, 0xe8, 0x88, 0x70, 0xc2, 0x56, 0x1B, 0x94]),
                 default_value: U256::from(300),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcSpartansWeth".to_string(),
@@ -192,6 +201,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from([0x18, 0x1e, 0xa6, 0x89, 0x74, 0xC1, 0x9b, 0x79, 0x3d, 0x80, 0x59, 0x13, 0x6b, 0x2F, 0xE2, 0x0B, 0x04, 0x41, 0xFd, 0x0d]),
                 default_value: U256::from(300),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcUsdtWeth".to_string(),
@@ -202,6 +212,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from([0x5A, 0x16, 0x36, 0x93, 0x4B, 0xA3, 0x43, 0x97, 0xa7, 0x3C, 0x8f, 0x8A, 0xFd, 0xF4, 0xF9, 0x6A, 0xEe, 0x77, 0x80, 0x01]),
                 default_value: U256::from(300),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "EurcUsdcWeth".to_string(),
@@ -212,6 +223,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from([0x7e, 0x59, 0x8D, 0xe3, 0xCd, 0x20, 0xc3, 0x1B, 0x28, 0x94, 0xe4, 0x6b, 0xB1, 0x37, 0x03, 0x33, 0x89, 0x82, 0xD6, 0xdb]),
                 default_value: U256::from(1300),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "AeroWeth".to_string(),
@@ -222,6 +234,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from([0x4D, 0xf3, 0xAf, 0xe2, 0x1b, 0x52, 0x8d, 0x01, 0x0b, 0x8d, 0xCd, 0xe6, 0x5E, 0xD2, 0x51, 0x75, 0x6d, 0xeA, 0x34, 0x65]),
                 default_value: U256::from(988),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcXccxWeth".to_string(),
@@ -232,6 +245,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from([0x62, 0x4E, 0xeB, 0xAf, 0xD2, 0x55, 0x32, 0xF2, 0xd3, 0x23, 0xC5, 0xB4, 0xa6, 0x97, 0x49, 0x56, 0x41, 0xb0, 0x4c, 0xF7]),
                 default_value: U256::from(900),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdbcWethUsdc".to_string(),
@@ -242,6 +256,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from([0x49, 0xcE, 0x99, 0x10, 0xC1, 0xD8, 0xDD, 0xAC, 0x57, 0xD1, 0x00, 0x1d, 0xfd, 0xc8, 0xa2, 0x57, 0x76, 0xF7, 0x9a, 0x8f]),
                 default_value: U256::from(900),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcPfusdcPbasedpepePepe".to_string(),
@@ -254,6 +269,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from([0x9e, 0xcE, 0x02, 0x97, 0x13, 0x5d, 0xE9, 0xa2, 0x96, 0xa2, 0xeE, 0xd1, 0x78, 0x7E, 0xBE, 0x98, 0x72, 0x88, 0x36, 0x83]),
                 default_value: U256::from(3200),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "WethPfwethPbrianBrian".to_string(),
@@ -266,6 +282,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from([0x5D, 0x49, 0xc3, 0xEc, 0x92, 0x6F, 0x78, 0x8a, 0x55, 0x93, 0x6B, 0xf9, 0x64, 0xc8, 0xFf, 0x48, 0x39, 0x89, 0x4b, 0xc8]),
                 default_value: U256::from(1200),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "WethBrianPbrianPfweth".to_string(),
@@ -278,6 +295,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from([0xAD, 0x2c, 0x7c, 0xCF, 0x6C, 0x87, 0xA8, 0x19, 0xb7, 0x41, 0x9d, 0x23, 0x42, 0xC8, 0x1d, 0x91, 0xb4, 0xb4, 0x09, 0x8d]),
                 default_value: U256::from(1500),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcPfusdcPusdpPeasUsdcWeth".to_string(),
@@ -290,6 +308,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from([0xcd, 0x70, 0xf4, 0x51, 0x25, 0x2c, 0x74, 0x06, 0x42, 0x4f, 0xdA, 0x55, 0x01, 0x6c, 0x8b, 0x05, 0x44, 0x3D, 0x6B, 0x49]),
                 default_value: U256::from(300),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcPfusdcPtibbirTibbirWeth".to_string(),
@@ -302,6 +321,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from([0x64, 0xaa, 0xFD, 0x7d, 0x91, 0x67, 0xde, 0x08, 0x0C, 0x6f, 0x58, 0x84, 0x9f, 0xbc, 0x11, 0xF1, 0x6E, 0x6c, 0xa3, 0x2C]),
                 default_value: U256::from(245),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "WethPfwethPpeasPeasUsdc".to_string(),
@@ -314,6 +334,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from([0xFD, 0x5d, 0x7d, 0x50, 0xA1, 0x1A, 0x7B, 0xC3, 0xB3, 0x5b, 0xb3, 0x0B, 0xB6, 0x20, 0x8d, 0x37, 0x66, 0xca, 0x95, 0x32]),
                 default_value: U256::from(300),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
             TokenPairProcessorConfig {
                 name: "TybgPtybgPfwethWeth".to_string(),
@@ -326,6 +347,7 @@ impl BackrunAnalyzer {
                 contract_address: Address::from([0x2c, 0x66, 0x51, 0xA0, 0x2b, 0x19, 0xE3, 0x1e, 0x46, 0xC0, 0x6F, 0xd6, 0x49, 0xDF, 0xD1, 0x39, 0xcc, 0x14, 0xFC, 0x2F]),
                 default_value: U256::from(9200),
                 data_format: "short".to_string(),
+                check_balance_of: None,
             },
         ];
         
