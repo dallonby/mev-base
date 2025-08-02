@@ -38,6 +38,8 @@ pub struct MevOpportunity {
     pub strategy: String,
     /// Gas used from simulation (if available)
     pub simulated_gas_used: Option<u64>,
+    /// Hash of the last transaction in the flashblock
+    pub last_flashblock_tx_hash: Option<alloy_primitives::B256>,
 }
 
 /// Work-stealing MEV search system optimized for high core counts

@@ -382,6 +382,10 @@ impl MevTaskWorker {
                                 self.state_snapshot.block_number,
                             );
                             
+                            // Get the hash of the last transaction in the flashblock
+                            let last_tx_hash = self.state_snapshot.transactions.last()
+                                .map(|tx| *tx.tx_hash());
+                            
                             return Ok(Some(MevOpportunity {
                                 block_number: self.state_snapshot.block_number,
                                 flashblock_index: self.state_snapshot.flashblock_index,
@@ -389,6 +393,7 @@ impl MevTaskWorker {
                                 expected_profit: alloy_primitives::U256::from(result.delta as u128),
                                 strategy: format!("Backrun_{}", config_name),
                                 simulated_gas_used: Some(gas_used),
+                                last_flashblock_tx_hash: last_tx_hash,
                             }));
                         } else {
                             debug!("No profitable backrun found");

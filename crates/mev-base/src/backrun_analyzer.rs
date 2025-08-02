@@ -98,6 +98,19 @@ impl BackrunAnalyzer {
         // Port all the configs from processorConfigs.ts
         let configs = vec![
             TokenPairProcessorConfig {
+                name: "WethAeroSpectre".to_string(),
+                tokens: vec![],
+                accounts: vec![
+                    // Convert token addresses
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x64fcc3a02eeeba05ef701b7eed066c6ebd5d4e51").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x940181a94a35a4569e4529a3cdfb74e38fd98631").unwrap()),
+                ],
+                // Convert contract address
+                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x295dc5279B8df362DF8B848276D0A9264512b09F").unwrap()),
+                default_value: U256::from(1000),
+                data_format: "short".to_string(),
+            },
+            TokenPairProcessorConfig {
                 name: "WethUsdcAero".to_string(),
                 tokens: vec![],
                 accounts: vec![
@@ -107,7 +120,7 @@ impl BackrunAnalyzer {
                 ],
                 // Convert contract address
                 contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0xdB7FD121983aDD932Afc73a73d869d8096810529").unwrap()),
-                default_value: U256::from(300),
+                default_value: U256::from(3000),
                 data_format: "short".to_string(),
             },
             TokenPairProcessorConfig {
@@ -120,7 +133,7 @@ impl BackrunAnalyzer {
                 ],
                 // Convert contract address
                 contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x3AfD01d840b36C0cA9Ee4AB75B503f60fE8E7458").unwrap()),
-                default_value: U256::from(100),
+                default_value: U256::from(1000),
                 data_format: "short".to_string(),
             },
             TokenPairProcessorConfig {
@@ -133,7 +146,7 @@ impl BackrunAnalyzer {
                 ],
                 // Convert contract address
                 contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0xe5C17Deb99f15033451b63d2Acf34d840211b3bB").unwrap()),
-                default_value: U256::from(300),
+                default_value: U256::from(3000),
                 data_format: "short".to_string(),
             },
             TokenPairProcessorConfig {

@@ -40,7 +40,7 @@ pub fn init_logging() {
         .with_file(false)
         .with_line_number(false)
         .with_level(true)
-        .with_ansi(true)
+        .with_ansi(true)  // Enable ANSI color codes for colorful output
         .compact();
     
     // Initialize the subscriber

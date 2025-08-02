@@ -10,7 +10,7 @@ import json
 import os
 import psycopg2
 from datetime import datetime
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -18,6 +18,54 @@ load_dotenv()
 
 TARGET_ADDRESS = "0xc0ffeefeED8B9d271445cf5D1d24d74D2ca4235E"
 RPC_URL = "/tmp/op-reth"
+
+def get_db_connection():
+    """Create a connection to PostgreSQL database."""
+    try:
+        conn = psycopg2.connect(
+            host=os.getenv('POSTGRES_HOST', 'localhost'),
+            port=int(os.getenv('POSTGRES_PORT', '5432')),
+            dbname=os.getenv('POSTGRES_DB', 'backrunner_db'),
+            user=os.getenv('POSTGRES_USER', 'backrunner'),
+            password=os.getenv('POSTGRES_PASSWORD', 'backrunner_password')
+        )
+        return conn
+    except Exception as e:
+        print(f"Failed to connect to PostgreSQL: {e}")
+        return None
+
+def query_transaction_timestamp(tx_hash: str) -> Optional[Dict[str, any]]:
+    """Query when a transaction was first seen in our database."""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    
+    try:
+        with conn.cursor() as cur:
+            # Query for the transaction
+            cur.execute("""
+                SELECT hash, MIN(timestamp) as first_seen, 
+                       array_agg(DISTINCT source ORDER BY source) as sources,
+                       MIN(block_number) as block_number
+                FROM transaction_logs 
+                WHERE hash = %s
+                GROUP BY hash
+            """, (tx_hash,))
+            
+            result = cur.fetchone()
+            if result:
+                return {
+                    'hash': result[0],
+                    'first_seen': result[1],
+                    'sources': result[2],
+                    'block_number': result[3]
+                }
+            return None
+    except Exception as e:
+        print(f"Error querying transaction: {e}")
+        return None
+    finally:
+        conn.close()
 
 def get_tx_info(tx_hash: str) -> Tuple[int, int]:
     """Get block number and transaction index for a given tx hash."""
@@ -225,6 +273,16 @@ def scan_for_transfer_point(start_tx_hash: str):
     """Scan backwards to find where transfers exceed msg.value."""
     print(f"Getting transaction details from: {start_tx_hash}")
     
+    # Query database for when we first saw this transaction
+    db_info = query_transaction_timestamp(start_tx_hash)
+    if db_info:
+        print(f"\n📊 Database info for original transaction:")
+        print(f"  First seen: {db_info['first_seen']}")
+        print(f"  Sources: {', '.join(db_info['sources'])}")
+        print(f"  Block: {db_info['block_number']}")
+    else:
+        print(f"\n⚠️  Transaction {start_tx_hash} not found in database")
+    
     # Get the original transaction details
     tx_details = get_tx_details(start_tx_hash)
     from_addr = tx_details.get("from", "")
@@ -302,6 +360,22 @@ def scan_for_transfer_point(start_tx_hash: str):
                                         tx_type_at_idx = int(tx_type_at_idx, 16)
                                     print(f"  Type: {tx_type_at_idx}")
                                     print(f"  Effective Gas Price: {effective_gas_price_at_idx} wei ({effective_gas_price_at_idx / 1e9:.4f} gwei)")
+                                    
+                                    # Query database for this transaction
+                                    db_info_found = query_transaction_timestamp(tx_hash_at_idx)
+                                    if db_info_found:
+                                        print(f"\n📊 Database info for found transaction:")
+                                        print(f"  First seen: {db_info_found['first_seen']}")
+                                        print(f"  Sources: {', '.join(db_info_found['sources'])}")
+                                        
+                                        # Calculate time difference if both transactions are in DB
+                                        if db_info and db_info_found:
+                                            time_diff = db_info_found['first_seen'] - db_info['first_seen']
+                                            print(f"  Time difference: {time_diff.total_seconds():.3f} seconds")
+                                            if time_diff.total_seconds() < 0:
+                                                print(f"  ⚠️  Found transaction was seen BEFORE original transaction!")
+                                    else:
+                                        print(f"\n⚠️  Transaction {tx_hash_at_idx} not found in database")
                             except Exception as e:
                                 print(f"\nError getting transaction at index {idx}: {e}")
                             

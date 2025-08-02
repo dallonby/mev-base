@@ -128,6 +128,11 @@ ureq = "2.10"
 alloy-transport-ipc = "0.1"
 reqwest = { version = "0.12", features = ["json"] }
 
+# PostgreSQL
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
+deadpool-postgres = "0.14"
+postgres-types = { version = "0.2", features = ["derive", "with-chrono-0_4"] }
+
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", branch = "main" }
 brotli = "8.0.1"
 crossbeam = "0.8"

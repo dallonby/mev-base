@@ -3,6 +3,10 @@
 - NEVER USE `2>&1` in command line for cargo
 - build with `cargo build -p mevbase --profile=release`
 
+## Cast Commands
+
+- Always use `--rpc-url /tmp/op-reth` for cast commands to use the local IPC connection
+
 ## PRIME DIRECTIVES
 - No mocks. No stubs. No simplifications. Create code that works for productions.
 - Use `cargo build` to check for compilation errors. Do it OFTEN. Don't add functionality until the code compiles.

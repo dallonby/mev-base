@@ -194,6 +194,17 @@ async fn process_payload(
     // Convert transactions
     let mut transactions = Vec::new();
     for (idx, tx_bytes) in diff.transactions.iter().enumerate() {
+        // Skip 0x7e transaction types (deposit transactions)
+        if !tx_bytes.is_empty() && tx_bytes[0] == 0x7e {
+            debug!(
+                block = block_number,
+                flashblock = payload.index,
+                tx_index = idx,
+                "Skipping 0x7e transaction type"
+            );
+            continue;
+        }
+        
         // Parse transaction bytes using RLP decoding
         match TxEnvelope::decode(&mut tx_bytes.as_ref()) {
             Ok(tx) => transactions.push(tx),
