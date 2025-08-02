@@ -167,7 +167,10 @@ impl BackrunAnalyzer {
                 contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0xe5C17Deb99f15033451b63d2Acf34d840211b3bB").unwrap()),
                 default_value: U256::from(3000),
                 data_format: "short".to_string(),
-                check_balance_of: None,
+                check_balance_of: Some((
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()), // ERC20 token (USDC)
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x8c54143b62cca30b0718ef8167ad5bc25881e554").unwrap()), // Address to check balance of
+                )),
             },
             TokenPairProcessorConfig {
                 name: "WethUsdc".to_string(),
