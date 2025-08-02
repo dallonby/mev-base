@@ -4,7 +4,7 @@ use reth_optimism_node::{
     OpNode,
 };
 use reth_optimism_cli::Cli;
-use reth_provider::{ReceiptProvider, StateProviderFactory};
+use reth_provider::{ReceiptProvider, StateProviderFactory, BlockNumReader};
 use reth_optimism_chainspec::BASE_MAINNET;
 use alloy_rpc_types_eth::BlockId;
 
@@ -14,6 +14,7 @@ use reth_node_api::FullNodeComponents;
 
 use std::sync::Arc;
 use tracing::{info, debug, error, warn};
+use dashmap::DashSet;
 use crate::transaction_service::{TransactionService, TransactionServiceConfig, WalletStrategy};
 use crate::wallet_service::WalletService;
 use crate::sequencer_service::SequencerService;
@@ -35,6 +36,7 @@ mod transaction_service;
 mod wallet_service;
 mod sequencer_service;
 mod metrics;
+mod database_service;
 
 /// Block subscriber ExEx that echoes block numbers
 async fn block_subscriber_exex<Node: FullNodeComponents>(
@@ -164,6 +166,18 @@ fn main() -> eyre::Result<()> {
         // Create channel for MEV results
         let (mev_result_tx, mut mev_result_rx) = tokio::sync::mpsc::channel::<mev_search_worker::MevOpportunity>(1000);
         
+        // Initialize database service for transaction logging
+        let db_service = match database_service::DatabaseService::new().await {
+            Ok(service) => {
+                info!("Database service initialized for transaction logging");
+                Some(Arc::new(service))
+            }
+            Err(e) => {
+                warn!("Failed to initialize database service: {}. Transaction logging disabled.", e);
+                None
+            }
+        };
+        
         // Create timing tracker
         let timing_tracker = lifecycle_timing::create_timing_tracker();
         
@@ -251,33 +265,100 @@ fn main() -> eyre::Result<()> {
         // Clone provider for MEV handler
         let mev_provider = blockchain_provider.clone();
         
-        // Spawn MEV opportunity handler with JSON logging
+        // Configuration for opportunity processing
+        const MAX_CONCURRENT_OPPORTUNITIES: usize = 5;
+        const OPPORTUNITY_TIMEOUT_SECS: u64 = 10;
+        const MAX_BLOCK_STALENESS: u64 = 2;
+        
+        // Spawn MEV opportunity handler with parallel processing
         tokio::spawn(async move {
+            let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_OPPORTUNITIES));
+            let submitted_txs = Arc::new(dashmap::DashSet::<(u64, String)>::new()); // (block_number, processor)
+            
             while let Some(opportunity) = mev_result_rx.recv().await {
+                // Get current block number for staleness check
+                let current_block = match mev_provider.best_block_number() {
+                    Ok(num) => num,
+                    Err(e) => {
+                        error!(error = ?e, "Failed to get current block number");
+                        continue;
+                    }
+                };
+                
+                // Check if opportunity is stale
+                if opportunity.block_number + MAX_BLOCK_STALENESS < current_block {
+                    warn!(
+                        strategy = %opportunity.strategy,
+                        opportunity_block = opportunity.block_number,
+                        current_block = current_block,
+                        blocks_behind = current_block - opportunity.block_number,
+                        "Skipping stale MEV opportunity"
+                    );
+                    continue;
+                }
+                
+                // Check if we already submitted a transaction for this block and processor
+                let block_processor_key = (opportunity.block_number, opportunity.strategy.clone());
+                if !submitted_txs.insert(block_processor_key.clone()) {
+                    debug!(
+                        strategy = %opportunity.strategy,
+                        block = opportunity.block_number,
+                        "Skipping - already submitted tx for this block/processor"
+                    );
+                    continue;
+                }
+                
                 info!(
                     strategy = %opportunity.strategy,
                     block = opportunity.block_number,
                     flashblock = opportunity.flashblock_index,
                     profit_wei = %opportunity.expected_profit,
                     bundle_size = opportunity.bundle.transactions.len(),
-                    "MEV opportunity found"
+                    current_block = current_block,
+                    "MEV opportunity found (first for this block/processor)"
                 );
                 
                 // Record opportunity metrics
                 crate::metrics::MEV_METRICS.opportunities_found_total.increment(1);
                 
-                // Log to JSON if profit exceeds threshold
-                if opportunity.expected_profit > threshold_for_handler {
+                // Skip if below threshold
+                if opportunity.expected_profit <= threshold_for_handler {
+                    debug!(
+                        strategy = %opportunity.strategy,
+                        profit_wei = %opportunity.expected_profit,
+                        threshold_wei = %threshold_for_handler,
+                        "MEV opportunity below profit threshold, skipping"
+                    );
+                    continue;
+                }
+                
+                // Process profitable opportunities in parallel
+                let permit = semaphore.clone().acquire_owned().await.unwrap();
+                let tx_service = transaction_service.clone();
+                let provider = mev_provider.clone();
+                let submitted_txs_clone = submitted_txs.clone();
+                let block_processor_key_clone = block_processor_key.clone();
+                
+                tokio::spawn(async move {
+                    // Hold permit for duration of processing
+                    let _permit = permit;
+                    
                     crate::metrics::MEV_METRICS.opportunities_profitable_total.increment(1);
+                    
+                    // Log to JSON
                     if let Err(e) = log_mev_opportunity_to_json(&opportunity) {
                         error!(error = ?e, "Failed to log MEV opportunity to JSON");
                     }
                     
-                    // Process the opportunity (build, sign, and submit transaction)
+                    // Process with timeout
                     let process_start = std::time::Instant::now();
+                    let timeout = tokio::time::Duration::from_secs(OPPORTUNITY_TIMEOUT_SECS);
                     
-                    match transaction_service.process_opportunity(&opportunity, &mev_provider).await {
-                        Ok(()) => {
+                    match tokio::time::timeout(
+                        timeout,
+                        tx_service.process_opportunity(&opportunity, &provider)
+                    ).await {
+                        Ok(Ok(())) => {
                             let elapsed = process_start.elapsed();
                             info!(
                                 strategy = %opportunity.strategy,
@@ -286,25 +367,33 @@ fn main() -> eyre::Result<()> {
                                 "Successfully processed MEV opportunity"
                             );
                         }
-                        Err(e) => {
+                        Ok(Err(e)) => {
                             error!(
                                 strategy = %opportunity.strategy,
                                 block = opportunity.block_number,
                                 error = ?e,
                                 "Failed to process MEV opportunity"
                             );
+                            // Remove from submitted set so another flashblock can try
+                            submitted_txs_clone.remove(&block_processor_key_clone);
+                        }
+                        Err(_) => {
+                            error!(
+                                strategy = %opportunity.strategy,
+                                block = opportunity.block_number,
+                                timeout_secs = OPPORTUNITY_TIMEOUT_SECS,
+                                "MEV opportunity processing timed out"
+                            );
+                            // Remove from submitted set so another flashblock can try
+                            submitted_txs_clone.remove(&block_processor_key_clone);
                         }
                     }
-                } else {
-                    debug!(
-                        strategy = %opportunity.strategy,
-                        profit_wei = %opportunity.expected_profit,
-                        threshold_wei = %threshold_for_handler,
-                        "MEV opportunity below profit threshold, skipping"
-                    );
-                }
+                });
             }
         });
+        
+        // Clone database service for flashblock thread
+        let db_service_for_flashblocks = db_service.clone();
         
         // Spawn dedicated synchronous flashblock simulator thread
         tokio::spawn(async move {
@@ -340,6 +429,31 @@ fn main() -> eyre::Result<()> {
                     flashblock = event.index,
                     "Processing flashblock in simulator thread"
                 );
+                
+                // Log all transaction hashes from this flashblock to database
+                if let Some(ref db_service) = db_service_for_flashblocks {
+                    let tx_logs: Vec<database_service::TransactionLog> = event.transactions.iter()
+                        .map(|tx| database_service::TransactionLog {
+                            hash: *tx.tx_hash(),
+                            source: format!("flashblock_{}", event.index),
+                            timestamp: chrono::Utc::now(),
+                            block_number: event.block_number,
+                        })
+                        .collect();
+                    
+                    if !tx_logs.is_empty() {
+                        debug!(
+                            count = tx_logs.len(),
+                            block = event.block_number,
+                            flashblock = event.index,
+                            "Logging flashblock transactions to database"
+                        );
+                        
+                        if let Err(e) = db_service.log_transactions(tx_logs).await {
+                            error!("Failed to log flashblock transactions: {}", e);
+                        }
+                    }
+                }
                 
                 // Use revm-based executor
                 debug!("Using revm-based executor");
@@ -513,7 +627,7 @@ fn log_mev_opportunity_to_json(opportunity: &mev_search_worker::MevOpportunity) 
     
     #[derive(Serialize)]
     struct MevResultLog {
-        timestamp: u64,
+        timestamp: String,
         block_number: u64,
         flashblock_index: u32,
         strategy: String,
@@ -523,6 +637,8 @@ fn log_mev_opportunity_to_json(opportunity: &mev_search_worker::MevOpportunity) 
         // Add first transaction details if available
         first_tx_to: Option<String>,
         first_tx_calldata: Option<String>,
+        // Hash of the last transaction in the flashblock
+        index_hash: Option<String>,
     }
     
     let first_tx = opportunity.bundle.transactions.first();
@@ -538,11 +654,12 @@ fn log_mev_opportunity_to_json(opportunity: &mev_search_worker::MevOpportunity) 
         None => (None, None),
     };
     
+    // Get current time with milliseconds
+    let now = chrono::Utc::now();
+    let timestamp = now.format("%Y-%m-%d %H:%M:%S%.3f UTC").to_string();
+    
     let result = MevResultLog {
-        timestamp: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
+        timestamp,
         block_number: opportunity.block_number,
         flashblock_index: opportunity.flashblock_index,
         strategy: opportunity.strategy.clone(),
@@ -551,6 +668,7 @@ fn log_mev_opportunity_to_json(opportunity: &mev_search_worker::MevOpportunity) 
         bundle_size: opportunity.bundle.transactions.len(),
         first_tx_to,
         first_tx_calldata,
+        index_hash: opportunity.last_flashblock_tx_hash.map(|h| format!("{:?}", h)),
     };
     
     // Append to JSONL file (JSON Lines format)

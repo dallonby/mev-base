@@ -9,6 +9,7 @@ use eyre::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
+use rand::Rng;
 
 use crate::mev_search_worker::MevOpportunity;
 use crate::wallet_service::WalletService;
@@ -186,9 +187,31 @@ impl TransactionService {
 
         // Calculate gas pricing from actual block header
         let base_fee = header.base_fee_per_gas().unwrap_or(1_000_000) as u128;
-        let priority_fee = 1_000_000u128; // 1 gwei priority
-        let multiplier = (self.config.gas_multiplier * 100.0) as u128;
         
+        // Dynamic priority fee: allocate 5% of profit to gas fees
+        let priority_fee = if let Some(simulated_gas) = opportunity.simulated_gas_used {
+            if simulated_gas > 0 {
+                // 5% of profit allocated to fees, divided by gas used = priority fee per gas
+                let profit_wei = opportunity.expected_profit.as_limbs()[0] as u128;
+                let fee_budget = profit_wei / 20; // 5% = 1/20
+                let priority_per_gas = fee_budget / (simulated_gas as u128);
+                
+                // Cap at a reasonable maximum (e.g., 1 gwei) to avoid overpaying
+                let max_priority = 1_000_000_000u128; // 1 gwei
+                let capped_priority = priority_per_gas.min(max_priority);
+                
+                // Slightly randomize by subtracting up to 25,000 wei
+                let mut rng = rand::thread_rng();
+                let randomization = rng.gen_range(0..=25_000u128);
+                capped_priority.saturating_sub(randomization)
+            } else {
+                5_000u128 // Fallback to 0.005 gwei if no gas estimate
+            }
+        } else {
+            5_000u128 // Fallback to 0.005 gwei if no simulation
+        };
+        
+        let multiplier = (self.config.gas_multiplier * 100.0) as u128;
         let max_priority_fee_per_gas = priority_fee;
         let max_fee_per_gas = (base_fee * multiplier / 100) + priority_fee;
         
@@ -200,7 +223,10 @@ impl TransactionService {
             multiplier = self.config.gas_multiplier,
             max_fee_per_gas_wei = max_fee_per_gas,
             max_fee_per_gas_gwei = max_fee_per_gas as f64 / 1e9,
-            "Calculated gas pricing"
+            profit_allocation = "5%",
+            simulated_gas = ?opportunity.simulated_gas_used,
+            expected_profit_wei = %opportunity.expected_profit,
+            "Calculated dynamic gas pricing"
         );
 
         // Build the transaction
