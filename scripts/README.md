@@ -60,6 +60,32 @@ source venv/bin/activate
 python test_db_query.py
 ```
 
+### scan_events.py
+
+Scans the Base blockchain for events with a specific topic0 signature.
+
+**Features:**
+- Takes any topic0 as command line argument
+- Configurable block range and chunk size
+- Groups results by contract address
+- Shows event statistics and sample data
+- Optional JSON output
+
+**Usage:**
+```bash
+# Scan for Transfer events (last 24 hours)
+python scan_events.py 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
+
+# Scan last 10,000 blocks for a specific event
+python scan_events.py 0x5380355699fac5266e4d95cf6985cf6a48abe03aa33d07723bdd0338a367af25 -b 10000
+
+# Save results to file
+python scan_events.py 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef -o transfers.json
+
+# Use custom chunk size for faster scanning
+python scan_events.py 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef -c 10000
+```
+
 ## Database Schema
 
 The scripts expect a `transaction_logs` table with the following structure:

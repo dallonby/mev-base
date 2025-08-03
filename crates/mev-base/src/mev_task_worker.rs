@@ -162,6 +162,7 @@ impl MevTaskWorker {
                     strategy = strategy_name,
                     block = timing.block_number,
                     flashblock = timing.flashblock_index,
+                    scan_id = %self.state_snapshot.scan_id,
                     total_ms = total_time,
                     search_ms = search_time,
                     gradient_ms = timing.gradient_completed
@@ -424,6 +425,7 @@ impl MevTaskWorker {
                                 strategy: format!("Backrun_{}", config_name),
                                 simulated_gas_used: Some(gas_used),
                                 last_flashblock_tx_hash: last_tx_hash,
+                                scan_id: self.state_snapshot.scan_id.clone(),
                             }));
                         } else {
                             debug!("No profitable backrun found");

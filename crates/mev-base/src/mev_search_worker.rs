@@ -40,6 +40,8 @@ pub struct MevOpportunity {
     pub simulated_gas_used: Option<u64>,
     /// Hash of the last transaction in the flashblock
     pub last_flashblock_tx_hash: Option<alloy_primitives::B256>,
+    /// Scan ID to track this opportunity back to the trigger
+    pub scan_id: String,
 }
 
 /// Work-stealing MEV search system optimized for high core counts
@@ -237,7 +239,9 @@ pub fn analyze_state_for_strategies(state: &FlashblockStateSnapshot) -> Vec<MevS
     let backrun_analyzer = BackrunAnalyzer::new(U256::from(10_000_000_000_000u64)); // 0.00001 ETH (10 microether) min profit
     let triggered_configs = backrun_analyzer.analyze_state_for_backrun(state);
     if !triggered_configs.is_empty() {
-        println!("   🎯 Backrun analyzer triggered {} configs: {:?}", triggered_configs.len(), triggered_configs);
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        println!("   🎯 [{}] Backrun analyzer triggered {} configs: {:?} (scanId: {})", 
+            timestamp, triggered_configs.len(), triggered_configs, state.scan_id);
         // Create a separate strategy for each triggered config
         for config_name in triggered_configs {
             strategies.insert(MevStrategy::Backrun(config_name));

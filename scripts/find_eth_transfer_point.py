@@ -96,10 +96,10 @@ def get_block_txs(block_number: int) -> list:
         return block_data["transactions"]
 
 def trace_call_at_state(block_number: int, tx_index: int, from_addr: str, to_addr: str, 
-                       calldata: str, value: int) -> int:
+                       calldata: str, value: int) -> Tuple[int, bool]:
     """
     Use debug_traceCallMany to simulate a call at a specific transaction index within a block.
-    Returns the total ETH transferred to the target address.
+    Returns a tuple of (total ETH transferred to target address, success bool).
     """
     # Convert block number and value to hex
     block_hex = hex(block_number)
@@ -136,11 +136,15 @@ def trace_call_at_state(block_number: int, tx_index: int, from_addr: str, to_add
     result = subprocess.run(cmd, capture_output=True, text=True)
     
     if result.returncode != 0:
+        # Check if it's a revert error
+        if "execution reverted" in result.stderr or "revert" in result.stderr.lower():
+            return 0, False  # Transaction reverted
         print(f"Error executing debug_traceCallMany: {result.stderr}")
-        return 0
+        return 0, False
     
     # Parse the trace to find value transfers to target
     total_transferred = 0
+    success = True  # Assume success unless we find a revert
     try:
         # Clean the stdout to handle any extra output
         stdout = result.stdout.strip()
@@ -166,12 +170,35 @@ def trace_call_at_state(block_number: int, tx_index: int, from_addr: str, to_add
         # debug_traceCallMany returns an array of arrays of results
         results_array = json.loads(stdout)
         
+        # Debug output for trace structure
+        if block_number == 33671282 or (tx_index >= 100 and tx_index <= 110):
+            print(f"\n    [Trace Debug] Results array length: {len(results_array) if results_array else 0}")
+            if results_array and len(results_array) > 0:
+                print(f"    [Trace Debug] First batch length: {len(results_array[0])}")
+        
         # Get the first batch, then the first result
         if results_array and len(results_array) > 0 and len(results_array[0]) > 0:
             trace_data = results_array[0][0]
         else:
-            # Silently return 0 for empty results
-            return 0
+            # Return 0 for empty results with debug
+            if block_number == 33671282 or (tx_index >= 100 and tx_index <= 110):
+                print(f"    [Trace Debug] Empty results, returning (0, False)")
+            return 0, False
+        
+        # Check if the main call reverted
+        if trace_data.get("error") or trace_data.get("revertReason"):
+            success = False
+            # Debug output for reverts
+            if block_number == 33671282 or tx_index in range(100, 110):  # Debug specific cases
+                print(f"\n    [Trace Debug] Revert detected: {trace_data.get('error', trace_data.get('revertReason'))}")
+        
+        # Debug: Show trace structure for specific cases
+        if block_number == 33671282 or (tx_index >= 100 and tx_index <= 110):
+            print(f"\n    [Trace Debug] Trace has {len(trace_data.get('calls', []))} calls")
+            if trace_data.get('type'):
+                print(f"    [Trace Debug] Call type: {trace_data.get('type')}")
+            if trace_data.get('to'):
+                print(f"    [Trace Debug] Main call to: {trace_data.get('to')}")
         
         # Process only direct calls to the target address, no recursion
         for call in trace_data.get("calls", []):
@@ -180,6 +207,9 @@ def trace_call_at_state(block_number: int, tx_index: int, from_addr: str, to_add
                 if value_hex and value_hex != "0x0":
                     transferred = int(value_hex, 16)
                     total_transferred += transferred
+                    # Debug output
+                    if block_number == 33671282 or (tx_index >= 100 and tx_index <= 110):
+                        print(f"    [Trace Debug] Found transfer to target: {transferred} wei")
         
     except json.JSONDecodeError as e:
         # Only show error for debugging specific indices
@@ -191,7 +221,7 @@ def trace_call_at_state(block_number: int, tx_index: int, from_addr: str, to_add
         if "reverted" not in str(e).lower():
             pass  # Silently ignore most errors
     
-    return total_transferred
+    return total_transferred, success
 
 def get_effective_gas_price(tx_details: dict) -> int:
     """Calculate effective gas price based on transaction type."""
@@ -259,18 +289,18 @@ def get_tx_details(tx_hash: str) -> dict:
     return json.loads(stdout)
 
 def trace_at_index(block_number: int, tx_index: int, from_addr: str, to_addr: str, 
-                   calldata: str, value: int) -> Tuple[int, int]:
+                   calldata: str, value: int) -> Tuple[int, int, bool]:
     """
     Trace a call at a specific block and transaction index.
-    Returns (msg_value, total_transferred)
+    Returns (msg_value, total_transferred, success)
     """
-    total_transferred = trace_call_at_state(
+    total_transferred, success = trace_call_at_state(
         block_number, tx_index, from_addr, to_addr, calldata, value
     )
-    return value, total_transferred
+    return value, total_transferred, success
 
 def scan_for_transfer_point(start_tx_hash: str):
-    """Scan backwards to find where transfers exceed msg.value."""
+    """Scan backwards to find where transfers exceed msg.value or where transaction goes from reverting to not reverting."""
     # Get the original transaction details
     tx_details = get_tx_details(start_tx_hash)
     from_addr = tx_details.get("from", "")
@@ -286,22 +316,52 @@ def scan_for_transfer_point(start_tx_hash: str):
     # Query database for when we first saw this transaction
     db_info = query_transaction_timestamp(start_tx_hash)
     
+    # Debug output for transaction details
+    print(f"\n[Debug] Transaction details:")
+    print(f"  From: {from_addr}")
+    print(f"  To: {to_addr}")
+    print(f"  Calldata: {calldata}")
+    print(f"  Value: {msg_value} wei")
+    print(f"  Block: {block_num}")
+    print(f"  Index: {tx_index}")
+    
     # Start scanning backwards from the transaction index
-    print(f"\nScanning block {block_num} backwards from index {tx_index}...", end='', flush=True)
+    print(f"\nScanning block {block_num} backwards from index {tx_index}...")
     
     found = False
+    found_type = None  # Track what type of opportunity was found
+    last_success_state = None  # Track the last known success state
     
     # Scan backwards through transaction indices
     for idx in range(tx_index, -1, -1):
         try:
             # Trace the call at this specific index
-            _, transferred = trace_at_index(
+            _, transferred, success = trace_at_index(
                 block_num, idx, from_addr, to_addr, calldata, msg_value
             )
             
-            if transferred > msg_value and not found:
+            # Debug output for each index
+            if idx >= tx_index - 5 or idx % 10 == 0:  # Show first 5 indices and every 10th
+                print(f"\n  [Debug] Index {idx}: success={success}, transferred={transferred}, msg_value={msg_value}, last_success={last_success_state}")
+            
+            # Check for reversion state change (from reverting to not reverting)
+            if last_success_state is False and success and not found:
                 found = True
-                print(f" found at index {idx}!")
+                found_type = "reversion_change"
+                print(f"\n✅ Found reversion state change at index {idx}!")
+                print(f"  Transaction went from reverting to succeeding")
+            
+            # Check for transfer exceeding msg.value
+            elif transferred > msg_value and not found:
+                found = True
+                found_type = "value_increase"
+                print(f"\n✅ Found value increase at index {idx}!")
+                print(f"  Transferred ({transferred}) > msg.value ({msg_value})")
+            
+            # Update last success state
+            last_success_state = success
+            
+            if found:
                 # Get the transaction hash at this index
                 try:
                     block_txs = get_block_txs(block_num)
@@ -317,6 +377,7 @@ def scan_for_transfer_point(start_tx_hash: str):
                         
                         # Print distilled results
                         print(f"\n" + "="*80)
+                        print(f"OPPORTUNITY TYPE: {found_type.upper().replace('_', ' ')}")
                         print(f"ORIGINAL TX: {start_tx_hash}")
                         print(f"WINNER TX:   {tx_hash_at_idx}")
                         print(f"WINNER TO:   {tx_details_at_idx.get('to', 'N/A')}")
@@ -352,11 +413,13 @@ def scan_for_transfer_point(start_tx_hash: str):
                 return
             
         except Exception as e:
-            # Skip indices that fail to trace silently
+            # Debug output for errors
+            if idx >= tx_index - 5 or idx % 10 == 0:
+                print(f"\n  [Debug] Index {idx}: ERROR - {str(e)[:100]}")
             continue
     
     if not found:
-        print("\n❌ No transaction index found where transfers exceed msg.value")
+        print("\n❌ No profitable opportunity found (neither value increase nor reversion state change)")
 
 def trace_specific_call():
     """
@@ -377,12 +440,15 @@ def trace_specific_call():
     print(f"Calldata: {calldata}")
     print(f"Value: {value} wei ({value / 1e18} ETH)")
     
-    total_transferred = trace_call_at_state(
+    total_transferred, success = trace_call_at_state(
         block_number, tx_index, from_addr, to_addr, calldata, value
     )
     
-    print(f"\nTotal ETH transferred to {TARGET_ADDRESS}: {total_transferred} wei ({total_transferred / 1e18} ETH)")
-    if total_transferred > value:
+    print(f"\nTransaction success: {success}")
+    print(f"Total ETH transferred to {TARGET_ADDRESS}: {total_transferred} wei ({total_transferred / 1e18} ETH)")
+    if not success:
+        print(f"❌ Transaction reverted")
+    elif total_transferred > value:
         print(f"✅ Transferred amount exceeds msg.value by {total_transferred - value} wei")
     else:
         print(f"❌ Transferred amount does not exceed msg.value")

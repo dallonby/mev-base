@@ -188,14 +188,14 @@ impl SequencerService {
                 
                 match conn.publish::<_, _, ()>(&redis_channel, payload.to_string()).await {
                     Ok(_) => {
-                        debug!("Successfully broadcast transaction to Redis channel: {}", redis_channel);
+                        info!("Successfully broadcast transaction to Redis channel: {}", redis_channel);
                     }
                     Err(e) => {
                         warn!("Failed to broadcast transaction to Redis: {}", e);
                     }
                 }
             } else {
-                debug!("Redis connection not available, skipping broadcast");
+                warn!("Redis connection not available, skipping broadcast");
             }
         });
 

@@ -639,6 +639,8 @@ fn log_mev_opportunity_to_json(opportunity: &mev_search_worker::MevOpportunity) 
         first_tx_calldata: Option<String>,
         // Hash of the last transaction in the flashblock
         index_hash: Option<String>,
+        // Scan ID to link back to trigger
+        scan_id: String,
     }
     
     let first_tx = opportunity.bundle.transactions.first();
@@ -669,6 +671,7 @@ fn log_mev_opportunity_to_json(opportunity: &mev_search_worker::MevOpportunity) 
         first_tx_to,
         first_tx_calldata,
         index_hash: opportunity.last_flashblock_tx_hash.map(|h| format!("{:?}", h)),
+        scan_id: opportunity.scan_id.clone(),
     };
     
     // Append to JSONL file (JSON Lines format)

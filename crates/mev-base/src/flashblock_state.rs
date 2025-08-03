@@ -22,6 +22,8 @@ pub struct FlashblockStateSnapshot {
     pub snapshot_time: std::time::Instant,
     /// Original transactions from the flashblock (for calldata analysis)
     pub transactions: Vec<TxEnvelope>,
+    /// Unique scan ID to track this analysis through the pipeline
+    pub scan_id: String,
 }
 
 impl FlashblockStateSnapshot {
@@ -31,6 +33,16 @@ impl FlashblockStateSnapshot {
         flashblock_index: u32,
         base_fee: u128,
     ) -> Self {
+        // Generate a unique scan ID based on block, flashblock index and timestamp
+        let scan_id = format!("{}-{}-{}", 
+            block_number, 
+            flashblock_index,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        );
+        
         Self {
             block_number,
             flashblock_index,
@@ -40,6 +52,7 @@ impl FlashblockStateSnapshot {
             base_fee,
             snapshot_time: std::time::Instant::now(),
             transactions: Vec::new(),
+            scan_id,
         }
     }
     
