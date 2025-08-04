@@ -177,27 +177,28 @@ impl SequencerService {
         // Clone tx_data for Redis broadcast
         let tx_for_redis = tx_data.clone();
         let redis_conn = self.redis_conn.clone();
-        let redis_channel = self.config.redis_channel.clone();
+        // DISABLED: Redis broadcasting seems to be causing issues with transaction inclusion
+        // let redis_channel = self.config.redis_channel.clone();
 
-        // Spawn Redis broadcast task to run concurrently with sequencer submission
-        let redis_task = tokio::spawn(async move {
-            if let Some(mut conn) = redis_conn.write().await.as_mut() {
-                let payload = serde_json::json!({
-                    "signedTx": tx_for_redis
-                });
-                
-                match conn.publish::<_, _, ()>(&redis_channel, payload.to_string()).await {
-                    Ok(_) => {
-                        info!("🌟💫 REDIS BROADCAST COMPLETE! 📡✨ Transaction echoing across the MEV network on channel: {} 🎊🎉", redis_channel);
-                    }
-                    Err(e) => {
-                        warn!("Failed to broadcast transaction to Redis: {}", e);
-                    }
-                }
-            } else {
-                warn!("Redis connection not available, skipping broadcast");
-            }
-        });
+        // // Spawn Redis broadcast task to run concurrently with sequencer submission
+        // let redis_task = tokio::spawn(async move {
+        //     if let Some(mut conn) = redis_conn.write().await.as_mut() {
+        //         let payload = serde_json::json!({
+        //             "signedTx": tx_for_redis
+        //         });
+        //         
+        //         match conn.publish::<_, _, ()>(&redis_channel, payload.to_string()).await {
+        //             Ok(_) => {
+        //                 info!("🌟💫 REDIS BROADCAST COMPLETE! 📡✨ Transaction echoing across the MEV network on channel: {} 🎊🎉", redis_channel);
+        //             }
+        //             Err(e) => {
+        //                 warn!("Failed to broadcast transaction to Redis: {}", e);
+        //             }
+        //         }
+        //     } else {
+        //         warn!("Redis connection not available, skipping broadcast");
+        //     }
+        // });
 
         let response = self.client
             .post(&self.config.url)
@@ -237,9 +238,10 @@ impl SequencerService {
         let sequencer_response: SequencerResponse = serde_json::from_str(&response_text)
             .map_err(|e| eyre::eyre!("Failed to parse sequencer response: {}", e))?;
 
-        // Wait for Redis broadcast to complete (but don't fail if it errors)
-        let redis_result = redis_task.await;
-        let redis_broadcast_success = redis_result.is_ok();
+        // DISABLED: Wait for Redis broadcast to complete (but don't fail if it errors)
+        // let redis_result = redis_task.await;
+        // let redis_broadcast_success = redis_result.is_ok();
+        let redis_broadcast_success = false; // Redis broadcast disabled
 
         if let Some(error) = sequencer_response.error {
             // Check if this is a "transaction already known" error

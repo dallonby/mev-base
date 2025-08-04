@@ -67,7 +67,14 @@ impl MevTaskWorker {
     {
         let task_start = std::time::Instant::now();
         let latency_ms = self.flashblock_received_at.elapsed().as_secs_f64() * 1000.0;
-        debug!(strategy = ?self.strategy, latency_ms = latency_ms, "MEV Task Worker starting search");
+        debug!(
+            strategy = ?self.strategy, 
+            latency_ms = latency_ms,
+            scan_id = %self.state_snapshot.scan_id,
+            block = self.state_snapshot.block_number,
+            flashblock = self.state_snapshot.flashblock_index,
+            "MEV Task Worker starting search"
+        );
         
         // Clone the lifecycle timing for this worker
         let mut worker_timing = if let Some(ref timing_tracker) = self.timing_tracker {
@@ -812,6 +819,15 @@ impl MevTaskWorker {
     }
 }
 
+/// Get the MEV worker timeout duration from environment or use default
+fn get_worker_timeout() -> std::time::Duration {
+    std::env::var("MEV_WORKER_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(std::time::Duration::from_secs)
+        .unwrap_or(std::time::Duration::from_secs(30))
+}
+
 /// Spawn a short-lived MEV task
 pub fn spawn_mev_task<P>(
     chain_spec: Arc<OpChainSpec>,
@@ -831,7 +847,7 @@ where
     tokio::spawn(async move {
         let worker = MevTaskWorker::new(
             chain_spec,
-            strategy,
+            strategy.clone(),
             state_snapshot,
             flashblock_received_at,
             timing_tracker,
@@ -839,8 +855,10 @@ where
             gas_history_store,
         );
         
-        match worker.execute(provider).await {
-            Ok(Some(opportunity)) => {
+        // Add timeout to prevent stuck workers
+        let timeout_duration = get_worker_timeout();
+        match tokio::time::timeout(timeout_duration, worker.execute(provider)).await {
+            Ok(Ok(Some(opportunity))) => {
                 // Only log at info level if above threshold
                 if opportunity.expected_profit > min_profit_threshold {
                     info!("MEV opportunity found");
@@ -851,11 +869,19 @@ where
                     error!(error = ?e, "Failed to send MEV opportunity");
                 }
             }
-            Ok(None) => {
+            Ok(Ok(None)) => {
                 // No opportunity found
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 error!(error = ?e, "MEV task error");
+            }
+            Err(_) => {
+                error!(
+                    strategy = ?strategy,
+                    timeout_secs = timeout_duration.as_secs(),
+                    "MEV task timed out after {} seconds - likely stuck database transaction",
+                    timeout_duration.as_secs()
+                );
             }
         }
     });
@@ -892,7 +918,7 @@ where
         tokio::spawn(async move {
             let worker = MevTaskWorker::new(
                 chain_spec,
-                strategy,
+                strategy.clone(),
                 (*state_snapshot).clone(), // Only clone when actually needed
                 flashblock_received_at,
                 timing_tracker,
@@ -900,8 +926,10 @@ where
                 gas_history_store,
             );
             
-            match worker.execute(provider).await {
-                Ok(Some(opportunity)) => {
+            // Add timeout to prevent stuck workers
+            let timeout_duration = get_worker_timeout();
+            match tokio::time::timeout(timeout_duration, worker.execute(provider)).await {
+                Ok(Ok(Some(opportunity))) => {
                     // Only log at info level if above threshold
                     if opportunity.expected_profit > min_profit_threshold {
                         info!("MEV opportunity found");
@@ -912,11 +940,19 @@ where
                         error!(error = ?e, "Failed to send MEV opportunity");
                     }
                 }
-                Ok(None) => {
+                Ok(Ok(None)) => {
                     // No opportunity found
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     error!(error = ?e, "MEV task error");
+                }
+                Err(_) => {
+                    error!(
+                        strategy = ?strategy,
+                        timeout_secs = timeout_duration.as_secs(),
+                        "MEV task timed out after {} seconds - likely stuck database transaction",
+                        timeout_duration.as_secs()
+                    );
                 }
             }
         })

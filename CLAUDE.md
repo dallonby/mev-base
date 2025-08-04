@@ -15,7 +15,16 @@
 - Refer to this document every time you /compact
 - Compile OFTEN.
 
-## Recent Updates (Latest: 2025-08-01)
+## Recent Updates (Latest: 2025-08-04)
+
+### Worker Timeout Protection
+- Added timeout protection to MEV worker tasks to prevent stuck database transactions
+- Configurable via `MEV_WORKER_TIMEOUT_SECS` environment variable (default: 30 seconds)
+- When a worker times out:
+  - Database transaction is automatically released via RAII
+  - Error logged with timeout duration and strategy name
+  - System continues processing other opportunities
+- Prevents database connection exhaustion from stuck workers
 
 ### Logging System
 - Implemented structured logging using `tracing` crate
@@ -81,6 +90,30 @@
 - Capped at 1 gwei maximum to prevent overpaying
 - Includes slight randomization (subtract 0-25k wei) to avoid detection patterns
 
+### MEV Results Monitor
+- **monitor_mev_results.py**: Real-time monitoring of MEV transaction outcomes
+  - Watches `mev_results.jsonl` for new entries
+  - Checks if our transactions made it on-chain using cast
+  - For failed transactions, analyzes who beat us:
+    - Runs `find_eth_transfer_point.py` to identify winning transaction
+    - Shows competitor's tx hash, gas price, and sender
+    - Indicates if we were in same flashblock (gas price issue) or different (timing issue)
+  - Usage:
+    ```bash
+    # Monitor continuously
+    scripts/monitor_mev.sh
+    
+    # Analyze last N entries
+    python3 scripts/monitor_mev_results.py --last 10
+    
+    # Run once on new entries
+    python3 scripts/monitor_mev_results.py --once
+    ```
+  - Output shows:
+    - ✅ Success: Transaction included and executed
+    - ❌ Reverted: Transaction included but failed
+    - ❌ Not Included: Lost to competitor (with detailed analysis)
+
 ### Adaptive Gas Management
 - Gas history stored in Redis with 24-hour TTL
 - IIR filter with α=0.05 for smooth gas tracking
@@ -92,12 +125,11 @@
   - Under half target: increase to 150%
   - Otherwise: keep as is
 
-### Redis Transaction Broadcasting
-- Transactions are now broadcast to Redis concurrently with sequencer submission
-- Redis channel: `baseTransactionBroadcast` 
-- Enables distributed MEV bot network to share transactions
-- Handles race conditions gracefully: if sequencer reports "already known" but Redis succeeded, considers it a success
-- Redis connection is initialized asynchronously to not block startup
+### Redis Transaction Broadcasting (DISABLED)
+- **Status: Temporarily disabled** - Was causing issues with transaction inclusion
+- Previously broadcast to Redis channel: `baseTransactionBroadcast`
+- Code is commented out in `sequencer_service.rs` but can be re-enabled if needed
+- Original purpose: Enable distributed MEV bot network to share transactions
 
 ## Architecture Updates
 
