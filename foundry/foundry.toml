@@ -1,0 +1,16 @@
+[profile.default]
+src = "contracts"
+out = "out"
+libs = ["lib"]
+script = "scripts"
+cache_path = "cache"
+solc = "0.8.30"
+optimizer = true
+optimizer_runs = 1000000
+via_ir = true
+gas_reports = ["*"]
+
+[rpc_endpoints]
+mainnet = "${ETH_RPC_URL}"
+base = "http://127.0.0.1:28545"
+local = "http://localhost:8545"

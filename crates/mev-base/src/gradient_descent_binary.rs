@@ -78,22 +78,33 @@ pub struct BinarySearchGradientOptimizer {
 
 impl BinarySearchGradientOptimizer {
     pub fn new() -> Self {
+        // Allow overriding iterations via environment variable
+        let max_iterations = std::env::var("MEV_GRADIENT_ITERATIONS")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(40);
+            
+        debug!("BinarySearchGradientOptimizer initialized with {} iterations", max_iterations);
+        
         Self {
-            max_iterations: 40, // Further reduced for faster execution
+            max_iterations,
         }
     }
     
     /// Adjust bounds based on filtered gas usage
     fn adjust_bounds_for_gas(&self, mut params: GradientParams) -> GradientParams {
-        const TARGET_GAS: u64 = 35_000_000; // Target 35M gas
+        // Target gas scales with iteration count
+        // Base: 35M for 40 iterations = 875k per iteration
+        let target_gas_per_iteration = 875_000u64;
+        let target_gas = target_gas_per_iteration * self.max_iterations as u64;
         
         if let Some(filtered_gas) = params.filtered_gas {
             // Calculate adjustment factor based on gas usage
-            let adjustment = if filtered_gas > TARGET_GAS * 2 {
+            let adjustment = if filtered_gas > target_gas * 2 {
                 0.5 // Reduce to 50% if using way too much gas
-            } else if filtered_gas > TARGET_GAS {
+            } else if filtered_gas > target_gas {
                 0.8 // Reduce to 80% if slightly over
-            } else if filtered_gas < TARGET_GAS / 2 {
+            } else if filtered_gas < target_gas / 2 {
                 1.5 // Increase to 150% if plenty of headroom
             } else {
                 1.0 // Keep as is

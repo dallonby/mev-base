@@ -81,6 +81,17 @@
 - Capped at 1 gwei maximum to prevent overpaying
 - Includes slight randomization (subtract 0-25k wei) to avoid detection patterns
 
+### Adaptive Gas Management
+- Gas history stored in Redis with 24-hour TTL
+- IIR filter with α=0.05 for smooth gas tracking
+- Target gas scales with iterations: 875k gas per iteration (35M for 40 iterations)
+- To increase iterations: `export MEV_GRADIENT_ITERATIONS=60`
+- Bounds adjustment:
+  - 2x over target: reduce to 50%
+  - Over target: reduce to 80%
+  - Under half target: increase to 150%
+  - Otherwise: keep as is
+
 ### Redis Transaction Broadcasting
 - Transactions are now broadcast to Redis concurrently with sequencer submission
 - Redis channel: `baseTransactionBroadcast` 

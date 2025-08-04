@@ -101,7 +101,7 @@ def monitor_gas_thresholds(continuous=False):
             print(f"{BOLD}MEV Gas History Monitor{RESET}")
             print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             print("=" * 100)
-            print(f"\n{BOLD}Target Gas:{RESET} {GREEN}35M{RESET} | {BOLD}IIR Filter:{RESET} α=0.05 | {BOLD}TTL:{RESET} 1 hour")
+            print(f"\n{BOLD}Target Gas:{RESET} {GREEN}35M{RESET} | {BOLD}IIR Filter:{RESET} α=0.05 | {BOLD}TTL:{RESET} 24 hours")
             print("=" * 100)
             
             # Get all gas history keys

@@ -82,7 +82,7 @@ impl GasHistoryStore {
         }
     }
 
-    /// Set filtered gas value for a target address with TTL of 1 hour
+    /// Set filtered gas value for a target address with TTL of 24 hours
     pub async fn set_filtered_gas(&self, target: &Address, filtered_gas: u64) {
         let conn_guard = self.redis_conn.read().await;
         if let Some(conn) = conn_guard.as_ref() {
@@ -90,8 +90,8 @@ impl GasHistoryStore {
             let key = format!("{}{:?}", self.key_prefix, target);
             let value = filtered_gas.to_string();
             
-            // Set with 1 hour TTL
-            match conn.set_ex::<_, _, ()>(&key, value, 3600).await {
+            // Set with 24 hour TTL (86400 seconds)
+            match conn.set_ex::<_, _, ()>(&key, value, 86400).await {
                 Ok(_) => {
                     debug!(target = %target, filtered_gas = filtered_gas, "Stored gas history in Redis");
                 }
