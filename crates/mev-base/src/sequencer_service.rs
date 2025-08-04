@@ -188,7 +188,7 @@ impl SequencerService {
                 
                 match conn.publish::<_, _, ()>(&redis_channel, payload.to_string()).await {
                     Ok(_) => {
-                        info!("Successfully broadcast transaction to Redis channel: {}", redis_channel);
+                        info!("🌟💫 REDIS BROADCAST COMPLETE! 📡✨ Transaction echoing across the MEV network on channel: {} 🎊🎉", redis_channel);
                     }
                     Err(e) => {
                         warn!("Failed to broadcast transaction to Redis: {}", e);
@@ -211,7 +211,9 @@ impl SequencerService {
         info!(
             status = response.status().as_u16(),
             elapsed_ms = elapsed.as_millis(),
-            "Received response from sequencer"
+            "⚡📨 SEQUENCER RESPONDED! Status: {} in {}ms! 🏁💫 The race is on! 🏎️💨",
+            response.status().as_u16(),
+            elapsed.as_millis()
         );
 
         if !response.status().is_success() {
@@ -229,7 +231,7 @@ impl SequencerService {
         let response_text = response.text().await?;
         info!(
             response_body = %response_text,
-            "Raw sequencer response"
+            "📬✨ SEQUENCER RESPONSE RECEIVED! 📡🎯 Transaction accepted into the mempool! 🌊🚀"
         );
         
         let sequencer_response: SequencerResponse = serde_json::from_str(&response_text)
@@ -293,7 +295,7 @@ impl SequencerService {
             tx_hash = %hash,
             elapsed_ms = elapsed.as_millis(),
             redis_broadcast = redis_broadcast_success,
-            "Successfully submitted transaction to sequencer"
+            "🎆🎇 TRANSACTION LAUNCHED TO SEQUENCER! 🚀✨ Transaction soaring through the mempool! 🎆🎇"
         );
 
         Ok(hash)

@@ -16,6 +16,8 @@ use crate::mev_search_worker::{MevStrategy, MevOpportunity};
 use crate::backrun_analyzer::BackrunAnalyzer;
 use crate::gradient_descent::{GradientOptimizer, GradientParams};
 use crate::gradient_descent_fast::FastGradientOptimizer;
+use crate::gradient_descent_multicall::MulticallGradientOptimizer;
+use crate::gradient_descent_binary::BinarySearchGradientOptimizer;
 use crate::lifecycle_timing::TimingTracker;
 
 /// A short-lived MEV task that gets its own StateProvider
@@ -32,6 +34,8 @@ pub struct MevTaskWorker {
     timing_tracker: Option<TimingTracker>,
     /// Minimum profit threshold for logging
     min_profit_threshold: alloy_primitives::U256,
+    /// Gas history store for adaptive optimization
+    gas_history_store: Arc<crate::gas_history_store::GasHistoryStore>,
 }
 
 impl MevTaskWorker {
@@ -42,6 +46,7 @@ impl MevTaskWorker {
         flashblock_received_at: std::time::Instant,
         timing_tracker: Option<TimingTracker>,
         min_profit_threshold: alloy_primitives::U256,
+        gas_history_store: Arc<crate::gas_history_store::GasHistoryStore>,
     ) -> Self {
         Self {
             chain_spec,
@@ -50,6 +55,7 @@ impl MevTaskWorker {
             flashblock_received_at,
             timing_tracker,
             min_profit_threshold,
+            gas_history_store,
         }
     }
     
@@ -134,7 +140,7 @@ impl MevTaskWorker {
         // Execute the MEV strategy
         let search_start = std::time::Instant::now();
         let result = match self.strategy {
-            MevStrategy::Backrun(ref config_name) => self.search_backrun(&mut cache_db, &evm_config, &mut worker_timing),
+            MevStrategy::Backrun(ref config_name) => self.search_backrun(&mut cache_db, &evm_config, &mut worker_timing).await,
         };
         let search_time = search_start.elapsed().as_secs_f64() * 1000.0;
         
@@ -149,14 +155,15 @@ impl MevTaskWorker {
         let strategy_metrics = crate::metrics::get_strategy_metrics(&strategy_name);
         strategy_metrics.worker_duration_seconds.record(total_time / 1000.0);
         
-        // Log worker-specific timing if we have timing info and found an opportunity
+        // Log worker-specific timing if we have timing info
         if let Some(timing) = worker_timing {
+            // Record gradient duration if available (regardless of profit found)
+            if let (Some(start), Some(end)) = (timing.gradient_started, timing.gradient_completed) {
+                let gradient_duration = end.duration_since(start).as_secs_f64();
+                strategy_metrics.gradient_duration_seconds.record(gradient_duration);
+            }
+            
             if result.is_ok() && result.as_ref().unwrap().is_some() {
-                // Record gradient duration if available
-                if let (Some(start), Some(end)) = (timing.gradient_started, timing.gradient_completed) {
-                    let gradient_duration = end.duration_since(start).as_secs_f64();
-                    strategy_metrics.gradient_duration_seconds.record(gradient_duration);
-                }
                 
                 info!(
                     strategy = strategy_name,
@@ -230,7 +237,7 @@ impl MevTaskWorker {
     
     
     /// Search for backrun opportunities using gradient optimizer
-    fn search_backrun<DB>(&self, cache_db: &mut CacheDB<DB>, evm_config: &OpEvmConfig<OpChainSpec, OpPrimitives>, worker_timing: &mut Option<crate::lifecycle_timing::LifecycleTiming>) -> eyre::Result<Option<MevOpportunity>>
+    async fn search_backrun<DB>(&self, cache_db: &mut CacheDB<DB>, evm_config: &OpEvmConfig<OpChainSpec, OpPrimitives>, worker_timing: &mut Option<crate::lifecycle_timing::LifecycleTiming>) -> eyre::Result<Option<MevOpportunity>>
     where
         DB: revm::Database + revm::DatabaseRef + std::fmt::Debug,
         <DB as revm::DatabaseRef>::Error: Send + Sync + 'static,
@@ -253,6 +260,13 @@ impl MevTaskWorker {
         // Get the configs
         let configs = analyzer.get_configs();
         if let Some(config) = configs.get(config_name) {
+                debug!(
+                    config = %config_name,
+                    contract = %config.contract_address,
+                    scan_id = %self.state_snapshot.scan_id,
+                    "Checking contract for backrun config"
+                );
+                
                 // Check if contract exists in CacheDB
                 let contract_info = cache_db.basic(config.contract_address)?;
                 trace!(
@@ -272,24 +286,45 @@ impl MevTaskWorker {
                         );
                         
                         if info.code_hash == alloy_primitives::KECCAK256_EMPTY {
-                            debug!("Contract has no code - skipping optimization");
+                            warn!(
+                                contract = %config.contract_address,
+                                config_name = %config_name,
+                                scan_id = %self.state_snapshot.scan_id,
+                                "Backrun config triggered but contract has no code - skipping"
+                            );
                             return Ok(None);
+                        } else {
+                            debug!(
+                                contract = %config.contract_address,
+                                config_name = %config_name,
+                                scan_id = %self.state_snapshot.scan_id,
+                                code_hash = ?info.code_hash,
+                                "Contract has code - proceeding with optimization"
+                            );
                         }
                     }
                     None => {
-                        debug!("Contract not found in state - skipping");
+                        warn!(
+                            contract = %config.contract_address,
+                            config_name = %config_name,
+                            scan_id = %self.state_snapshot.scan_id,
+                            "Backrun config triggered but contract not found in state - skipping"
+                        );
                         return Ok(None);
                     }
                 }
                 
                 // Calculate bounds based on initial quantity (matching TypeScript logic)
-                let min_qty = (config.default_value / alloy_primitives::U256::from(100)).max(alloy_primitives::U256::from(1)); // max(1, 1% of initial)
-                let max_qty_uncapped = config.default_value.saturating_mul(alloy_primitives::U256::from(100)); // 100x initial
+                let min_qty = (config.default_value / alloy_primitives::U256::from(5)).max(alloy_primitives::U256::from(1)); // max(1, 1% of initial)
+                let max_qty_uncapped = config.default_value.saturating_mul(alloy_primitives::U256::from(1000)); // 100x initial
                 let max_qty = if max_qty_uncapped > alloy_primitives::U256::from(0xffffff) {
                     alloy_primitives::U256::from(0xffffff) // Cap at 16.7M (24-bit max)
                 } else {
                     max_qty_uncapped
                 };
+                
+                // Get filtered gas from Redis for this target
+                let filtered_gas = self.gas_history_store.get_filtered_gas(&config.contract_address).await;
                 
                 // Create gradient parameters
                 let params = GradientParams {
@@ -299,21 +334,56 @@ impl MevTaskWorker {
                     lower_bound: min_qty,
                     upper_bound: max_qty,
                     target_address: config.contract_address,
+                    filtered_gas,
                 };
                 
-                // Run gradient optimization - use fast version for speed
-                let optimizer = FastGradientOptimizer::new();
+                // Run gradient optimization - use binary search version for best performance
+                let optimizer = BinarySearchGradientOptimizer::new();
                 
                 // Mark gradient start in worker timing
                 if let Some(ref mut timing) = worker_timing {
                     timing.gradient_started = Some(std::time::Instant::now());
                 }
                 
+                debug!(
+                    config = %config_name,
+                    scan_id = %self.state_snapshot.scan_id,
+                    "Starting binary search optimization"
+                );
+                
                 match optimizer.optimize_quantity(params, &self.state_snapshot, cache_db, evm_config) {
                     Ok(result) => {
                         // Mark gradient completion in worker timing
                         if let Some(ref mut timing) = worker_timing {
                             timing.gradient_completed = Some(std::time::Instant::now());
+                        }
+                        
+                        // Save updated filtered gas to Redis if available
+                        if let Some(new_filtered_gas) = result.filtered_gas {
+                            let gas_store = self.gas_history_store.clone();
+                            let target = config.contract_address;
+                            tokio::spawn(async move {
+                                gas_store.set_filtered_gas(&target, new_filtered_gas).await;
+                            });
+                        }
+                        
+                        debug!(
+                            config = %config_name,
+                            scan_id = %self.state_snapshot.scan_id,
+                            delta = result.delta,
+                            qty_in = %result.qty_in,
+                            filtered_gas = ?result.filtered_gas,
+                            "Binary search completed"
+                        );
+                        
+                        // Track problematic configs
+                        if result.gas_used > 30_000_000 {
+                            warn!(
+                                config = %config_name,
+                                target = %config.contract_address,
+                                gas_used = result.gas_used,
+                                "High gas usage config detected"
+                            );
                         }
                         
                         if result.delta > 0 {
@@ -328,13 +398,19 @@ impl MevTaskWorker {
                                 info!(
                                     profit_wei = result.delta,
                                     profit_eth = (result.delta as f64 / 1e18),
-                                    "Found profitable backrun"
+                                    scan_id = %self.state_snapshot.scan_id,
+                                    "💎💰 PROFITABLE BACKRUN DISCOVERED! 🎯🚀 Profit: {} ETH ({} wei)! 🎊✨ MONEY PRINTER GO BRRR! 🖨️💸",
+                                    (result.delta as f64 / 1e18),
+                                    result.delta
                                 );
                             } else {
-                                debug!(
+                                info!(
                                     profit_wei = result.delta,
                                     profit_eth = (result.delta as f64 / 1e18),
-                                    "Found backrun below threshold"
+                                    threshold_wei = %self.min_profit_threshold,
+                                    threshold_eth = (self.min_profit_threshold.as_limbs()[0] as f64 / 1e18),
+                                    scan_id = %self.state_snapshot.scan_id,
+                                    "Found backrun but profit below threshold - not submitting"
                                 );
                             }
                             
@@ -428,11 +504,19 @@ impl MevTaskWorker {
                                 scan_id: self.state_snapshot.scan_id.clone(),
                             }));
                         } else {
-                            debug!("No profitable backrun found");
+                            debug!(
+                                scan_id = %self.state_snapshot.scan_id,
+                                "Gradient optimization found no profit - not submitting"
+                            );
                         }
                     }
                     Err(e) => {
-                        warn!(error = ?e, "Gradient optimization error");
+                        warn!(
+                            error = ?e,
+                            config = %config_name,
+                            scan_id = %self.state_snapshot.scan_id,
+                            "Binary search optimization error"
+                        );
                     }
                 }
             }
@@ -738,6 +822,7 @@ pub fn spawn_mev_task<P>(
     result_tx: tokio::sync::mpsc::Sender<MevOpportunity>,
     timing_tracker: Option<TimingTracker>,
     min_profit_threshold: alloy_primitives::U256,
+    gas_history_store: Arc<crate::gas_history_store::GasHistoryStore>,
 )
 where
     P: StateProviderFactory + reth_provider::HeaderProvider + reth_provider::BlockReader + Clone + Send + 'static,
@@ -751,6 +836,7 @@ where
             flashblock_received_at,
             timing_tracker,
             min_profit_threshold,
+            gas_history_store,
         );
         
         match worker.execute(provider).await {
@@ -785,6 +871,7 @@ pub fn spawn_mev_tasks_batch<P>(
     result_tx: tokio::sync::mpsc::Sender<MevOpportunity>,
     timing_tracker: Option<TimingTracker>,
     min_profit_threshold: alloy_primitives::U256,
+    gas_history_store: Arc<crate::gas_history_store::GasHistoryStore>,
 )
 where
     P: StateProviderFactory + reth_provider::HeaderProvider + reth_provider::BlockReader + Clone + Send + 'static,
@@ -800,6 +887,7 @@ where
         let state_snapshot = state_snapshot.clone();
         let result_tx = result_tx.clone();
         let timing_tracker = timing_tracker.clone();
+        let gas_history_store = gas_history_store.clone();
         
         tokio::spawn(async move {
             let worker = MevTaskWorker::new(
@@ -809,6 +897,7 @@ where
                 flashblock_received_at,
                 timing_tracker,
                 min_profit_threshold,
+                gas_history_store,
             );
             
             match worker.execute(provider).await {

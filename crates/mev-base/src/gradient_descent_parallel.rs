@@ -61,6 +61,7 @@ impl ParallelGradientOptimizer {
             delta: 0,
             calldata_used: params.calldata_template.clone(),
             gas_used: 0,
+            filtered_gas: None,
         }));
         
         let hotspots = Arc::new(Mutex::new(Vec::<U256>::new()));
@@ -328,6 +329,7 @@ impl ParallelGradientOptimizer {
                             delta: 0,
                             calldata_used: calldata.into(),
                             gas_used,
+                            filtered_gas: None,
                         })
                     }
                     ExecutionResult::Revert { output, gas_used: revert_gas_used } => {
@@ -357,6 +359,7 @@ impl ParallelGradientOptimizer {
                             delta,
                             calldata_used: calldata.into(),
                             gas_used: revert_gas_used,
+                            filtered_gas: None,
                         })
                     }
                     ExecutionResult::Halt { .. } => {
@@ -365,6 +368,7 @@ impl ParallelGradientOptimizer {
                             delta: 0,
                             calldata_used: calldata.into(),
                             gas_used,
+                            filtered_gas: None,
                         })
                     }
                 }
@@ -375,6 +379,7 @@ impl ParallelGradientOptimizer {
                     delta: 0,
                     calldata_used: calldata.into(),
                     gas_used: 0,
+            filtered_gas: None,
                 })
             }
         }

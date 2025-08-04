@@ -1,4 +1,4 @@
-use alloy_primitives::U256;
+use alloy_primitives::{U256, B256};
 use alloy_consensus::{TxEip1559, TxEnvelope, Signed, Transaction, SignableTransaction};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_network::TxSigner;
@@ -74,14 +74,14 @@ impl TransactionService {
         &self,
         opportunity: &MevOpportunity,
         provider: &P,
-    ) -> Result<()> 
+    ) -> Result<Option<B256>> 
     where
         P: StateProviderFactory + HeaderProvider + reth_provider::BlockNumReader,
         P::Header: BlockHeader,
     {
         if !self.config.enabled {
             debug!("Transaction service is disabled, skipping opportunity");
-            return Ok(());
+            return Ok(None);
         }
 
         let start_time = std::time::Instant::now();
@@ -280,7 +280,7 @@ impl TransactionService {
         if self.config.dry_run {
             info!("DRY RUN MODE - Not submitting transaction");
             self.log_dry_run(&opportunity, &tx_mut, &signed_hex).await;
-            return Ok(());
+            return Ok(None);
         }
 
         // Submit to sequencer
@@ -295,8 +295,11 @@ impl TransactionService {
                     tx_hash = %tx_hash,
                     elapsed_ms = elapsed.as_millis(),
                     expected_profit = %opportunity.expected_profit,
-                    "Successfully submitted MEV transaction to sequencer"
+                    "🎯💰 MEV JACKPOT SUBMITTED! 🎰🚀 Profit incoming: {} wei! 💎🔥 Strategy {} STRIKES GOLD! 🏆✨",
+                    opportunity.expected_profit,
+                    opportunity.strategy
                 );
+                return Ok(Some(tx_hash));
             }
             Err(e) => {
                 error!(
@@ -311,7 +314,7 @@ impl TransactionService {
             }
         }
 
-        Ok(())
+        Ok(None)
     }
 
     /// Get the next wallet based on the configured strategy

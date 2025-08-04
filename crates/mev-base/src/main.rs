@@ -7,6 +7,7 @@ use reth_optimism_cli::Cli;
 use reth_provider::{ReceiptProvider, StateProviderFactory, BlockNumReader};
 use reth_optimism_chainspec::BASE_MAINNET;
 use alloy_rpc_types_eth::BlockId;
+use alloy_primitives::B256;
 
 use futures::TryStreamExt;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
@@ -30,6 +31,9 @@ mod revm_flashblock_executor;
 mod gradient_descent;
 mod gradient_descent_parallel;
 mod gradient_descent_fast;
+mod gradient_descent_multicall;
+mod gradient_descent_binary;
+mod gas_history_store;
 pub mod backrun_analyzer;
 mod logging;
 mod transaction_service;
@@ -205,6 +209,25 @@ fn main() -> eyre::Result<()> {
             }
         };
         
+        // Initialize gas history store using REDIS_LOCAL_* config (fallback to REDIS_*)
+        let redis_host = std::env::var("REDIS_LOCAL_HOST")
+            .or_else(|_| std::env::var("REDIS_HOST"))
+            .unwrap_or_else(|_| "localhost".to_string());
+        let redis_port = std::env::var("REDIS_LOCAL_PORT")
+            .or_else(|_| std::env::var("REDIS_PORT"))
+            .unwrap_or_else(|_| "6379".to_string())
+            .parse::<u16>()
+            .unwrap_or(6379);
+        let redis_password = std::env::var("REDIS_LOCAL_PASSWORD")
+            .or_else(|_| std::env::var("REDIS_PASSWORD"))
+            .unwrap_or_default();
+        
+        info!("Initializing gas history store with Redis at {}:{}", redis_host, redis_port);
+        let gas_history_store = Arc::new(
+            crate::gas_history_store::GasHistoryStore::new(&redis_host, redis_port, &redis_password).await
+        );
+        info!("Gas history store initialized");
+        
         // Load transaction service config from env
         let tx_config = TransactionServiceConfig {
             enabled: std::env::var("BLOCK_TX_ENABLED")
@@ -345,11 +368,6 @@ fn main() -> eyre::Result<()> {
                     
                     crate::metrics::MEV_METRICS.opportunities_profitable_total.increment(1);
                     
-                    // Log to JSON
-                    if let Err(e) = log_mev_opportunity_to_json(&opportunity) {
-                        error!(error = ?e, "Failed to log MEV opportunity to JSON");
-                    }
-                    
                     // Process with timeout
                     let process_start = std::time::Instant::now();
                     let timeout = tokio::time::Duration::from_secs(OPPORTUNITY_TIMEOUT_SECS);
@@ -358,14 +376,23 @@ fn main() -> eyre::Result<()> {
                         timeout,
                         tx_service.process_opportunity(&opportunity, &provider)
                     ).await {
-                        Ok(Ok(())) => {
+                        Ok(Ok(tx_hash)) => {
                             let elapsed = process_start.elapsed();
                             info!(
                                 strategy = %opportunity.strategy,
                                 block = opportunity.block_number,
                                 elapsed_ms = elapsed.as_millis(),
-                                "Successfully processed MEV opportunity"
+                                tx_hash = ?tx_hash,
+                                "🎊🎉 MEV OPPORTUNITY CAPTURED! 🎯💸 {} strategy executed in {}ms! 🚀⚡ Transaction: {:?} 🌟🔥",
+                                opportunity.strategy,
+                                elapsed.as_millis(),
+                                tx_hash
                             );
+                            
+                            // Log to JSON with transaction hash
+                            if let Err(e) = log_mev_opportunity_to_json(&opportunity, tx_hash) {
+                                error!(error = ?e, "Failed to log MEV opportunity to JSON");
+                            }
                         }
                         Ok(Err(e)) => {
                             error!(
@@ -374,6 +401,12 @@ fn main() -> eyre::Result<()> {
                                 error = ?e,
                                 "Failed to process MEV opportunity"
                             );
+                            
+                            // Log to JSON even on failure (with no tx hash)
+                            if let Err(log_err) = log_mev_opportunity_to_json(&opportunity, None) {
+                                error!(error = ?log_err, "Failed to log MEV opportunity to JSON");
+                            }
+                            
                             // Remove from submitted set so another flashblock can try
                             submitted_txs_clone.remove(&block_processor_key_clone);
                         }
@@ -384,6 +417,12 @@ fn main() -> eyre::Result<()> {
                                 timeout_secs = OPPORTUNITY_TIMEOUT_SECS,
                                 "MEV opportunity processing timed out"
                             );
+                            
+                            // Log to JSON even on timeout (with no tx hash)
+                            if let Err(log_err) = log_mev_opportunity_to_json(&opportunity, None) {
+                                error!(error = ?log_err, "Failed to log MEV opportunity to JSON");
+                            }
+                            
                             // Remove from submitted set so another flashblock can try
                             submitted_txs_clone.remove(&block_processor_key_clone);
                         }
@@ -394,6 +433,7 @@ fn main() -> eyre::Result<()> {
         
         // Clone database service for flashblock thread
         let db_service_for_flashblocks = db_service.clone();
+        let gas_history_store_for_flashblocks = gas_history_store.clone();
         
         // Spawn dedicated synchronous flashblock simulator thread
         tokio::spawn(async move {
@@ -529,6 +569,7 @@ fn main() -> eyre::Result<()> {
                                         mev_result_tx.clone(),
                                         Some(timing_for_workers.clone()),
                                         min_profit_threshold,
+                                        gas_history_store_for_flashblocks.clone(),
                                     );
                                     timing.workers_spawned = Some(std::time::Instant::now());
                                 } else {
@@ -620,7 +661,7 @@ fn main() -> eyre::Result<()> {
 }
 
 /// Log MEV opportunity to JSON file
-fn log_mev_opportunity_to_json(opportunity: &mev_search_worker::MevOpportunity) -> eyre::Result<()> {
+fn log_mev_opportunity_to_json(opportunity: &mev_search_worker::MevOpportunity, tx_hash: Option<B256>) -> eyre::Result<()> {
     use std::fs::OpenOptions;
     use std::io::Write;
     use serde::Serialize;
@@ -641,6 +682,8 @@ fn log_mev_opportunity_to_json(opportunity: &mev_search_worker::MevOpportunity) 
         index_hash: Option<String>,
         // Scan ID to link back to trigger
         scan_id: String,
+        // Transaction hash if submitted
+        transaction_hash: Option<String>,
     }
     
     let first_tx = opportunity.bundle.transactions.first();
@@ -672,6 +715,7 @@ fn log_mev_opportunity_to_json(opportunity: &mev_search_worker::MevOpportunity) 
         first_tx_calldata,
         index_hash: opportunity.last_flashblock_tx_hash.map(|h| format!("{:?}", h)),
         scan_id: opportunity.scan_id.clone(),
+        transaction_hash: tx_hash.map(|h| format!("{:?}", h)),
     };
     
     // Append to JSONL file (JSON Lines format)
