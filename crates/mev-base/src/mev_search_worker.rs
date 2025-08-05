@@ -239,8 +239,21 @@ pub fn analyze_state_for_strategies(state: &FlashblockStateSnapshot) -> Vec<MevS
     let triggered_configs = backrun_analyzer.analyze_state_for_backrun(state);
     if !triggered_configs.is_empty() {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-        println!("   🎯 [{}] Backrun analyzer triggered {} configs: {:?} (scanId: {})", 
-            timestamp, triggered_configs.len(), triggered_configs, state.scan_id);
+        
+        // Show condensed message - only show 5 configs if more than 5 triggered
+        if triggered_configs.len() > 5 {
+            // Simple approach: just take the first 5 configs
+            let sample: Vec<_> = triggered_configs.iter()
+                .take(5)
+                .cloned()
+                .collect();
+            println!("   🎯 [{}] Backrun: {} configs triggered (showing 5: {:?}...) scanId: {}", 
+                timestamp, triggered_configs.len(), sample, state.scan_id);
+        } else {
+            println!("   🎯 [{}] Backrun: {} configs triggered ({:?}) scanId: {}", 
+                timestamp, triggered_configs.len(), triggered_configs, state.scan_id);
+        }
+        
         // Create a separate strategy for each triggered config
         for config_name in triggered_configs {
             strategies.insert(MevStrategy::Backrun(config_name));

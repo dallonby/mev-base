@@ -125,7 +125,8 @@ fn main() -> eyre::Result<()> {
         
         // Start flashblocks client
         let mut flashblocks_client = flashblocks::FlashblocksClient::new(
-            "wss://mainnet.flashblocks.base.org/ws".to_string(),
+            // "wss://mainnet.flashblocks.base.org/ws".to_string(),
+            "ws://127.0.0.1:6081".to_string(),
             4096, // event buffer size
         );
         
