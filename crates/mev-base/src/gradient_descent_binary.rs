@@ -98,6 +98,9 @@ impl BinarySearchGradientOptimizer {
         let target_gas_per_iteration = 875_000u64;
         let target_gas = target_gas_per_iteration * self.max_iterations as u64;
         
+        // Calculate the current multiplier (what was loaded and applied)
+        let current_multiplier = params.upper_bound / params.initial_qty;
+        
         if let Some(filtered_gas) = params.filtered_gas {
             // Calculate adjustment factor based on gas usage
             let adjustment = if filtered_gas > target_gas * 2 {
@@ -110,8 +113,7 @@ impl BinarySearchGradientOptimizer {
                 1.0 // Keep as is
             };
             
-            // Calculate new upper bound
-            let current_multiplier = params.upper_bound / params.initial_qty;
+            // Apply adjustment to current multiplier
             let new_multiplier = U256::from((current_multiplier.to::<u64>() as f64 * adjustment) as u64);
             let new_multiplier = new_multiplier.max(U256::from(10)).min(U256::from(1000));
             let new_upper = params.initial_qty * new_multiplier;
@@ -119,23 +121,24 @@ impl BinarySearchGradientOptimizer {
             if new_upper != params.upper_bound {
                 debug!(
                     target = %params.target_address,
+                    current_multiplier = current_multiplier.to::<u64>(),
+                    new_multiplier = new_multiplier.to::<u64>(),
                     old_upper = %params.upper_bound,
                     new_upper = %new_upper,
                     filtered_gas_millions = filtered_gas / 1_000_000,
+                    target_gas_millions = target_gas / 1_000_000,
                     adjustment = adjustment,
                     "Adjusting upper bound based on gas usage"
                 );
                 params.upper_bound = new_upper;
             }
+            
+            // Return the NEW multiplier that will be stored
+            (params, new_multiplier.to::<u64>())
         } else {
-            // No gas history, use initial multiplier
-            let initial_multiplier = params.upper_bound / params.initial_qty;
-            return (params, initial_multiplier.to::<u64>());
+            // No gas history, return current multiplier as-is
+            (params, current_multiplier.to::<u64>())
         }
-        
-        // Return the actual multiplier being used
-        let final_multiplier = params.upper_bound / params.initial_qty;
-        (params, final_multiplier.to::<u64>())
     }
 
     /// Optimize quantity using in-contract binary search
