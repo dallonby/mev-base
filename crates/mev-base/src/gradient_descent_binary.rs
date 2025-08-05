@@ -13,7 +13,7 @@ use reth_evm::{ConfigureEvm, Evm};
 use crate::flashblock_state::FlashblockStateSnapshot;
 use alloy_consensus::{TxEip1559, TxEnvelope, Signed};
 use alloy_eips::eip2718::Encodable2718;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, trace, warn};
 
 // Re-export types from the main gradient descent module
 pub use crate::gradient_descent::{GradientParams, OptimizeOutput};
@@ -116,16 +116,8 @@ impl BinarySearchGradientOptimizer {
             // Apply adjustment to current multiplier
             let new_multiplier = U256::from((current_multiplier.to::<u64>() as f64 * adjustment) as u64);
             
-            // Calculate max multiplier based on 3-byte limit (0xFFFFFF) and initial value
-            let max_absolute_value = U256::from(0xFFFFFF); // 16,777,215
-            let max_multiplier = if params.initial_qty > U256::ZERO {
-                max_absolute_value / params.initial_qty
-            } else {
-                U256::from(1000) // Fallback if initial_qty is zero
-            };
-            
-            // Clamp between 10x minimum and calculated maximum
-            let new_multiplier = new_multiplier.max(U256::from(10)).min(max_multiplier);
+            // Clamp between 10x minimum and 1000x maximum
+            let new_multiplier = new_multiplier.max(U256::from(10)).min(U256::from(1000));
             let new_upper = params.initial_qty * new_multiplier;
             
             if new_upper != params.upper_bound {
@@ -143,28 +135,10 @@ impl BinarySearchGradientOptimizer {
                 params.upper_bound = new_upper;
             }
             
-            // Log what we're returning
-            info!(
-                target = %params.target_address,
-                filtered_gas = filtered_gas,
-                target_gas = target_gas,
-                adjustment = adjustment,
-                current_mult = current_multiplier.to::<u64>(),
-                new_mult = new_multiplier.to::<u64>(),
-                max_mult = max_multiplier.to::<u64>(),
-                initial_qty = %params.initial_qty,
-                "Adjusted multiplier for next run"
-            );
-            
             // Return the NEW multiplier that will be stored
             (params, new_multiplier.to::<u64>())
         } else {
             // No gas history, return current multiplier as-is
-            info!(
-                target = %params.target_address,
-                current_mult = current_multiplier.to::<u64>(),
-                "No gas history, keeping current multiplier"
-            );
             (params, current_multiplier.to::<u64>())
         }
     }

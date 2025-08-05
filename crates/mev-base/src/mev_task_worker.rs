@@ -317,20 +317,14 @@ impl MevTaskWorker {
                     }
                 }
                 
-                // Calculate bounds based on initial quantity
+                // Calculate bounds based on initial quantity (matching TypeScript logic)
                 let min_qty = (config.default_value / alloy_primitives::U256::from(5)).max(alloy_primitives::U256::from(1)); // max(1, 20% of initial)
-                
-                // Calculate maximum multiplier based on 3-byte limit
-                let max_absolute_value = alloy_primitives::U256::from(0xFFFFFF); // 16,777,215
-                let max_multiplier = if config.default_value > alloy_primitives::U256::ZERO {
-                    max_absolute_value / config.default_value
+                let max_qty_uncapped = config.default_value.saturating_mul(alloy_primitives::U256::from(1000)); // 1000x initial
+                let max_qty = if max_qty_uncapped > alloy_primitives::U256::from(0xffffff) {
+                    alloy_primitives::U256::from(0xffffff) // Cap at 16.7M (24-bit max)
                 } else {
-                    alloy_primitives::U256::from(1000) // Fallback
+                    max_qty_uncapped
                 };
-                
-                // Start with 1000x or the calculated max, whichever is smaller
-                let initial_multiplier = max_multiplier.min(alloy_primitives::U256::from(1000));
-                let max_qty = config.default_value.saturating_mul(initial_multiplier);
                 
                 // Get filtered gas and multiplier from Redis for this target
                 let filtered_gas = self.gas_history_store.get_filtered_gas(&config.contract_address).await;
@@ -394,12 +388,6 @@ impl MevTaskWorker {
                             let gas_store = self.gas_history_store.clone();
                             let target = config.contract_address;
                             let multiplier = result.actual_multiplier;
-                            info!(
-                                target = %target,
-                                filtered_gas = new_filtered_gas,
-                                multiplier = ?multiplier,
-                                "Storing gas history and multiplier to Redis"
-                            );
                             tokio::spawn(async move {
                                 gas_store.set_filtered_gas_and_multiplier(&target, new_filtered_gas, multiplier).await;
                             });
