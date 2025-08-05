@@ -513,11 +513,11 @@ impl BackrunAnalyzer {
                     // Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()),
                 ],
                 // Convert contract address
-                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0xEb1763F0d5F712a3f155FfF96b5Ac2433122B7DB").unwrap()),
+                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x7e2D7acA5bBB8d30c3628EEe1EE18E9626421DF2").unwrap()),
                 default_value: U256::from(200),
                 data_format: "short".to_string(),
                 check_balance_of: Some((
-                    Address::from(BackrunAnalyzer::address_to_bytes("0x940181a94A35A4569E4529A3CDfB74e38FD98631").unwrap()), // ERC20 token (USDC)
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0xE5B5f522E98B5a2baAe212d4dA66b865B781DB97").unwrap()), // Address to check balance of
                 )),
             },
@@ -570,10 +570,14 @@ impl BackrunAnalyzer {
                     Address::from([0xc0, 0x63, 0x40, 0x90, 0xf2, 0xfe, 0x6c, 0x6d, 0x75, 0xe6, 0x1b, 0xe2, 0xb9, 0x49, 0x46, 0x4a, 0xbb, 0x49, 0x89, 0x73]),
                 ],
                 accounts: vec![],
-                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0xc9E3e959Ec5a1c1dFB34854C438208d13860193c").unwrap()),
+                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x6cDa604E8D9A67497B3B2872667f7DCBdB81eF9F").unwrap()),
                 default_value: U256::from(174),
                 data_format: "short".to_string(),
-                check_balance_of: None,
+                check_balance_of: Some((
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x5Ba5ED44D7262C5A0021fd5fba621C9CceA0DdAB").unwrap()), // ERC20 token (USDC)
+                    Address::from(BackrunAnalyzer::address_to_bytes("0xc0634090F2Fe6c6d75e61Be2b949464aBB498973").unwrap()), // Address to check balance of
+                )),
+
             },
             TokenPairProcessorConfig {
                 name: "UsdcSpartansWeth".to_string(),
@@ -603,10 +607,13 @@ impl BackrunAnalyzer {
                     Address::from([0x60, 0xa3, 0xe3, 0x5c, 0xc3, 0x02, 0xbf, 0xa4, 0x4c, 0xb2, 0x88, 0xbc, 0x5a, 0x4f, 0x31, 0x6f, 0xdb, 0x1a, 0xdb, 0x42]),
                 ],
                 accounts: vec![],
-                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0xf0Ca4Df73823A9F587d00Ab6bb4eee9B218c5Af1").unwrap()),
+                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0xAA34C38Bd8cB58077e32B611FFc8a1772b3D687A").unwrap()),
                 default_value: U256::from(644),
                 data_format: "short".to_string(),
-                check_balance_of: None,
+                check_balance_of: Some((
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x260441e9574c0633c70c5cff3a47d75dc9bc3e22").unwrap()), // Address to check balance of
+                )),
             },
             TokenPairProcessorConfig {
                 name: "UsdcXccxWeth".to_string(),
@@ -625,10 +632,14 @@ impl BackrunAnalyzer {
                     Address::from([0xd9, 0xaa, 0xec, 0x86, 0xb6, 0x5d, 0x86, 0xf6, 0xa7, 0xb5, 0xb1, 0xb0, 0xc4, 0x2f, 0xfa, 0x53, 0x17, 0x10, 0xb6, 0xca]),
                 ],
                 accounts: vec![],
-                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x0d5f0Cbf138352FEA45E82F8b4966e2a50Fe8d5c").unwrap()),
+                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x81bbD0101d8bB1b138005271353137AFD36d5c9e").unwrap()),
                 default_value: U256::from(381),
                 data_format: "short".to_string(),
-                check_balance_of: None,
+                check_balance_of: Some((
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()), // ERC20 token (USDC)
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x88492051e18a65fe00241a93699a6082ae95c828").unwrap()), // Address to check balance of
+                )),
+
             },
             TokenPairProcessorConfig {
                 name: "UsdcPfusdcPbasedpepePepe".to_string(),

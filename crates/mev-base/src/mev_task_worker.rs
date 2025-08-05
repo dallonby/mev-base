@@ -319,15 +319,37 @@ impl MevTaskWorker {
                 
                 // Calculate bounds based on initial quantity (matching TypeScript logic)
                 let min_qty = (config.default_value / alloy_primitives::U256::from(5)).max(alloy_primitives::U256::from(1)); // max(1, 1% of initial)
-                let max_qty_uncapped = config.default_value.saturating_mul(alloy_primitives::U256::from(1000)); // 100x initial
+                let max_qty_uncapped = config.default_value.saturating_mul(alloy_primitives::U256::from(1000)); // 1000x initial
                 let max_qty = if max_qty_uncapped > alloy_primitives::U256::from(0xffffff) {
                     alloy_primitives::U256::from(0xffffff) // Cap at 16.7M (24-bit max)
                 } else {
                     max_qty_uncapped
                 };
                 
-                // Get filtered gas from Redis for this target
+                // Get filtered gas and multiplier from Redis for this target
                 let filtered_gas = self.gas_history_store.get_filtered_gas(&config.contract_address).await;
+                let stored_multiplier = self.gas_history_store.get_multiplier(&config.contract_address).await;
+                
+                // Apply stored multiplier if available
+                let adjusted_upper_bound = if let Some(multiplier) = stored_multiplier {
+                    let adjusted = config.default_value.saturating_mul(alloy_primitives::U256::from(multiplier));
+                    // Still cap at 16.7M
+                    if adjusted > alloy_primitives::U256::from(0xffffff) {
+                        alloy_primitives::U256::from(0xffffff)
+                    } else {
+                        adjusted
+                    }
+                } else {
+                    max_qty // Use initial 1000x if no history
+                };
+                
+                debug!(
+                    contract = %config.contract_address,
+                    stored_multiplier = ?stored_multiplier,
+                    initial_upper = %max_qty,
+                    adjusted_upper = %adjusted_upper_bound,
+                    "Applied stored multiplier to bounds"
+                );
                 
                 // Create gradient parameters
                 let params = GradientParams {
@@ -335,7 +357,7 @@ impl MevTaskWorker {
                     calldata_template: alloy_primitives::Bytes::from(vec![0x00, 0x00, 0x00, 0x00]), // Short format
                     seed: alloy_primitives::U256::from(self.state_snapshot.block_number * 1000 + self.state_snapshot.flashblock_index as u64),
                     lower_bound: min_qty,
-                    upper_bound: max_qty,
+                    upper_bound: adjusted_upper_bound,
                     target_address: config.contract_address,
                     filtered_gas,
                 };
