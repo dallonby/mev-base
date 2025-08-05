@@ -1,4 +1,4 @@
-use alloy_consensus::{TxEnvelope, Transaction as _, transaction::SignerRecoverable, BlockHeader, TxEip4844Variant};
+use alloy_consensus::{TxEnvelope, Transaction as _, transaction::SignerRecoverable, BlockHeader};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::TxKind;
 use alloy_rpc_types_eth::{BlockId, EthCallResponse};

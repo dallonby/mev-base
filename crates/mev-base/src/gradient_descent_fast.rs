@@ -1,8 +1,7 @@
-use alloy_primitives::{Address, U256, Bytes, TxKind};
+use alloy_primitives::{Address, U256, TxKind};
 use revm::{
     context::TxEnv,
-    context_interface::result::{ExecutionResult, Output},
-    Database,
+    context_interface::result::ExecutionResult,
     database::{DbAccount, AccountState},
     state::AccountInfo,
 };
@@ -12,7 +11,7 @@ use reth_evm::{ConfigureEvm, Evm};
 use crate::flashblock_state::FlashblockStateSnapshot;
 use alloy_consensus::{TxEip1559, TxEnvelope, Signed};
 use alloy_eips::eip2718::Encodable2718;
-use tracing::{debug, trace};
+use tracing::trace;
 
 // Re-export types from the main gradient descent module
 pub use crate::gradient_descent::{GradientParams, OptimizeOutput};

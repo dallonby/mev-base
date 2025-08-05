@@ -1,7 +1,6 @@
 use crate::flashblock_state::FlashblockStateSnapshot;
-use crate::mev_bundle_types::{MevBundle, BundleTransaction};
-use alloy_primitives::{Address, U256, Bytes};
-use alloy_consensus::Transaction;
+use crate::mev_bundle_types::MevBundle;
+use alloy_primitives::U256;
 use tokio::sync::mpsc;
 use crossbeam::deque::{Injector, Stealer, Worker};
 use std::sync::Arc;
@@ -108,7 +107,7 @@ async fn mev_search_worker_steal(
     worker: Worker<MevSearchTask>,
     injector: Arc<Injector<MevSearchTask>>,
     stealers: Vec<Stealer<MevSearchTask>>,
-    result_tx: mpsc::Sender<MevOpportunity>,
+    _result_tx: mpsc::Sender<MevOpportunity>,
 ) {
     println!("🔍 MEV Search Worker {} starting (work-stealing enabled)", worker_id);
     

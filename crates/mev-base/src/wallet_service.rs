@@ -1,7 +1,6 @@
 use alloy_signer_local::PrivateKeySigner;
 use eyre::Result;
 use rand::Rng;
-use std::sync::Arc;
 use tracing::{debug, info};
 
 /// Service for managing wallets and signing transactions
@@ -79,8 +78,8 @@ impl WalletService {
             return Err(eyre::eyre!("No wallets available"));
         }
 
-        let mut rng = rand::thread_rng();
-        let index = rng.gen_range(0..self.wallets.len());
+        let mut rng = rand::rng();
+        let index = rng.random_range(0..self.wallets.len());
         
         debug!(index = index, "Selected random wallet");
         Ok(self.wallets[index].clone())

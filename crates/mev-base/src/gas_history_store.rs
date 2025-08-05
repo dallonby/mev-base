@@ -2,7 +2,7 @@ use redis::aio::ConnectionManager;
 use redis::{AsyncCommands, Client as RedisClient};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 use alloy_primitives::Address;
 
 /// Store for tracking gas usage history per target address

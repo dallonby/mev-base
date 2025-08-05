@@ -201,8 +201,8 @@ impl TransactionService {
                 let capped_priority = priority_per_gas.min(max_priority);
                 
                 // Slightly randomize by subtracting up to 25,000 wei
-                let mut rng = rand::thread_rng();
-                let randomization = rng.gen_range(0..=25_000u128);
+                let mut rng = rand::rng();
+                let randomization = rng.random_range(0..=25_000u128);
                 capped_priority.saturating_sub(randomization)
             } else {
                 5_000u128 // Fallback to 0.005 gwei if no gas estimate
@@ -299,7 +299,7 @@ impl TransactionService {
                     opportunity.expected_profit,
                     opportunity.strategy
                 );
-                return Ok(Some(tx_hash));
+                Ok(Some(tx_hash))
             }
             Err(e) => {
                 error!(
@@ -310,11 +310,9 @@ impl TransactionService {
                     error_message = %e,
                     "Failed to submit MEV transaction"
                 );
-                return Err(e);
+                Err(e)
             }
         }
-
-        Ok(None)
     }
 
     /// Get the next wallet based on the configured strategy

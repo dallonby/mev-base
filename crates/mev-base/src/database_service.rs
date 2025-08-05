@@ -1,8 +1,7 @@
-use std::sync::Arc;
 use tokio::sync::mpsc;
-use deadpool_postgres::{Config, Manager, ManagerConfig, Pool, RecyclingMethod, Runtime};
+use deadpool_postgres::{Config, ManagerConfig, Pool, RecyclingMethod, Runtime};
 use tokio_postgres::NoTls;
-use tracing::{info, error, warn, debug};
+use tracing::{info, error, debug};
 use chrono::{DateTime, Utc};
 use alloy_primitives::TxHash;
 

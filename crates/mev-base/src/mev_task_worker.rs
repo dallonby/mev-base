@@ -1,4 +1,3 @@
-use alloy_consensus::{BlockHeader, SignableTransaction};
 use reth_provider::StateProviderFactory;
 use reth_revm::{database::StateProviderDatabase, db::CacheDB};
 use revm::database::{DbAccount, AccountState};
@@ -14,9 +13,7 @@ use tracing::{debug, trace, info, warn, error};
 use crate::flashblock_state::FlashblockStateSnapshot;
 use crate::mev_search_worker::{MevStrategy, MevOpportunity};
 use crate::backrun_analyzer::BackrunAnalyzer;
-use crate::gradient_descent::{GradientOptimizer, GradientParams};
-use crate::gradient_descent_fast::FastGradientOptimizer;
-use crate::gradient_descent_multicall::MulticallGradientOptimizer;
+use crate::gradient_descent::GradientParams;
 use crate::gradient_descent_binary::BinarySearchGradientOptimizer;
 use crate::lifecycle_timing::TimingTracker;
 
@@ -94,7 +91,7 @@ impl MevTaskWorker {
         
         // Get the block header
         let header_start = std::time::Instant::now();
-        let header = provider.header_by_number(provider.best_block_number()?)?
+        let _header = provider.header_by_number(provider.best_block_number()?)?
             .ok_or_else(|| eyre::eyre!("Header not found"))?;
         let header_time = header_start.elapsed().as_secs_f64() * 1000.0;
         
@@ -147,7 +144,7 @@ impl MevTaskWorker {
         // Execute the MEV strategy
         let search_start = std::time::Instant::now();
         let result = match self.strategy {
-            MevStrategy::Backrun(ref config_name) => self.search_backrun(&mut cache_db, &evm_config, &mut worker_timing).await,
+            MevStrategy::Backrun(ref _config_name) => self.search_backrun(&mut cache_db, &evm_config, &mut worker_timing).await,
         };
         let search_time = search_start.elapsed().as_secs_f64() * 1000.0;
         
@@ -252,7 +249,6 @@ impl MevTaskWorker {
         // Get the specific config for this worker (based on strategy name)
         let config_name = match &self.strategy {
             MevStrategy::Backrun(config) => config,
-            _ => return Ok(None), // Should never happen
         };
         
         debug!(config = %config_name, "Worker searching for backrun opportunity");

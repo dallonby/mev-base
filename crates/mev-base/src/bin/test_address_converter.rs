@@ -1,4 +1,3 @@
-use alloy_primitives::Address;
 
 // Just implement the converter functions inline for this test
 fn address_to_bytes(address_str: &str) -> Result<[u8; 20], String> {

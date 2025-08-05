@@ -4,7 +4,7 @@ use reth_optimism_node::{
     OpNode,
 };
 use reth_optimism_cli::Cli;
-use reth_provider::{ReceiptProvider, StateProviderFactory, BlockNumReader};
+use reth_provider::{ReceiptProvider, BlockNumReader};
 use reth_optimism_chainspec::BASE_MAINNET;
 use alloy_rpc_types_eth::BlockId;
 use alloy_primitives::B256;
@@ -15,7 +15,6 @@ use reth_node_api::FullNodeComponents;
 
 use std::sync::Arc;
 use tracing::{info, debug, error, warn};
-use dashmap::DashSet;
 use crate::transaction_service::{TransactionService, TransactionServiceConfig, WalletStrategy};
 use crate::wallet_service::WalletService;
 use crate::sequencer_service::SequencerService;

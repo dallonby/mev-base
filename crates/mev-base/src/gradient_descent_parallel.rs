@@ -1,8 +1,7 @@
-use alloy_primitives::{Address, U256, Bytes, TxKind};
+use alloy_primitives::{Address, U256, TxKind};
 use revm::{
     context::TxEnv,
-    context_interface::result::{ExecutionResult, Output},
-    Database,
+    context_interface::result::ExecutionResult,
     database::{DbAccount, AccountState},
     state::AccountInfo,
 };

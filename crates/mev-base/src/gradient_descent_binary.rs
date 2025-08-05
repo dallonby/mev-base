@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, U256, Bytes, TxKind};
+use alloy_primitives::{Address, U256, TxKind};
 use alloy_sol_types::{sol, SolCall, SolValue};
 use revm::{
     context::TxEnv,

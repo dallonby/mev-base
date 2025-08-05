@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 use redis::aio::ConnectionManager;
-use redis::{AsyncCommands, Client as RedisClient};
+use redis::Client as RedisClient;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -175,8 +175,8 @@ impl SequencerService {
         let start_time = std::time::Instant::now();
 
         // Clone tx_data for Redis broadcast
-        let tx_for_redis = tx_data.clone();
-        let redis_conn = self.redis_conn.clone();
+        let _tx_for_redis = tx_data.clone();
+        let _redis_conn = self.redis_conn.clone();
         // DISABLED: Redis broadcasting seems to be causing issues with transaction inclusion
         // let redis_channel = self.config.redis_channel.clone();
 

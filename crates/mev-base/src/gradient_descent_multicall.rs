@@ -3,7 +3,6 @@ use alloy_sol_types::{sol, SolCall, SolValue};
 use revm::{
     context::TxEnv,
     context_interface::result::{ExecutionResult, Output},
-    Database,
     database::{DbAccount, AccountState},
     state::AccountInfo,
     bytecode::Bytecode,
