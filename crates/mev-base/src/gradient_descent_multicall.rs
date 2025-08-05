@@ -109,6 +109,7 @@ impl MulticallGradientOptimizer {
             calldata_used: params.calldata_template.clone(),
             gas_used: 0,
             filtered_gas: None,
+            actual_multiplier: None,
         };
         
         // Pre-fund bot address once
@@ -363,7 +364,8 @@ impl MulticallGradientOptimizer {
                                     delta: 0,
                                     calldata_used: self.create_calldata(qty),
                                     gas_used: 0,
-            filtered_gas: None,
+                                    filtered_gas: None,
+                                    actual_multiplier: None,
                                 }).collect()
                             }
                         };
@@ -385,7 +387,8 @@ impl MulticallGradientOptimizer {
                             delta: 0,
                             calldata_used: self.create_calldata(qty),
                             gas_used: 0,
-            filtered_gas: None,
+                            filtered_gas: None,
+                            actual_multiplier: None,
                         }).collect())
                     }
                     _ => {
@@ -395,7 +398,8 @@ impl MulticallGradientOptimizer {
                             delta: 0,
                             calldata_used: self.create_calldata(qty),
                             gas_used: 0,
-            filtered_gas: None,
+                            filtered_gas: None,
+                            actual_multiplier: None,
                         }).collect())
                     }
                 }
@@ -407,7 +411,8 @@ impl MulticallGradientOptimizer {
                     delta: 0,
                     calldata_used: self.create_calldata(qty),
                     gas_used: 0,
-            filtered_gas: None,
+                    filtered_gas: None,
+                    actual_multiplier: None,
                 }).collect())
             }
         }
@@ -454,7 +459,8 @@ impl MulticallGradientOptimizer {
                 delta,
                 calldata_used: self.create_calldata(*qty),
                 gas_used: test_result.gasUsed.try_into().unwrap_or(0),
-            filtered_gas: None,
+                filtered_gas: None,
+                actual_multiplier: None,
             });
         }
         

@@ -201,8 +201,10 @@ def run_find_eth_transfer(tx_hash: str) -> Optional[Dict]:
 
 def analyze_failed_transaction(mev_result: Dict) -> Dict:
     """Analyze why our MEV transaction failed."""
+    tx_hash = mev_result.get('transaction_hash')
+    
     analysis = {
-        'our_tx': mev_result['transaction_hash'],
+        'our_tx': tx_hash,
         'block': mev_result['block_number'],
         'flashblock': mev_result['flashblock_index'],
         'strategy': mev_result['strategy'],
@@ -211,8 +213,14 @@ def analyze_failed_transaction(mev_result: Dict) -> Dict:
         'competitor': None
     }
     
+    # Skip analysis if no transaction hash
+    if not tx_hash:
+        analysis['status'] = 'no_transaction'
+        analysis['revert_reason'] = 'No transaction was generated (possibly below profit threshold)'
+        return analysis
+    
     # Check if our transaction made it on-chain
-    receipt = get_transaction_receipt(mev_result['transaction_hash'])
+    receipt = get_transaction_receipt(tx_hash)
     
     if receipt:
         # Transaction was included
@@ -231,10 +239,10 @@ def analyze_failed_transaction(mev_result: Dict) -> Dict:
     
     # For both reverted and not_included, find who beat us
     if analysis['status'] in ['reverted', 'not_included']:
-        print(f"  Running find_eth_transfer analysis for tx {mev_result['transaction_hash']}...")
+        print(f"  Running find_eth_transfer analysis for tx {tx_hash}...")
         
         # Run find_eth_transfer with our transaction hash to see who beat us
-        winner = run_find_eth_transfer(mev_result['transaction_hash'])
+        winner = run_find_eth_transfer(tx_hash)
         
         if winner:
             analysis['competitor'] = winner
@@ -298,6 +306,9 @@ def format_analysis(analysis: Dict) -> str:
         lines.append(f"   Our Gas Price: {analysis.get('effective_gas_price_gwei', 0):.4f} gwei")
     elif analysis['status'] == 'not_included':
         lines.append(f"❌ Transaction not included in block")
+    elif analysis['status'] == 'no_transaction':
+        lines.append(f"⚠️  No transaction generated")
+        lines.append(f"   Reason: {analysis.get('revert_reason', 'Unknown')}")
     
     # Show competitor info for both reverted and not_included
     if analysis['status'] in ['reverted', 'not_included'] and analysis.get('competitor'):
@@ -368,7 +379,8 @@ def main():
                 for line in lines[start_idx:]:
                     try:
                         result = json.loads(line.strip())
-                        log_output(f"\nAnalyzing: {result['transaction_hash']}", args.log)
+                        tx_hash = result.get('transaction_hash', 'No TX')
+                        log_output(f"\nAnalyzing: {tx_hash}", args.log)
                         analysis = analyze_failed_transaction(result)
                         log_output(format_analysis(analysis), args.log)
                     except json.JSONDecodeError:
@@ -396,7 +408,8 @@ def main():
         for line in new_lines:
             try:
                 result = json.loads(line.strip())
-                log_output(f"\n🆕 New MEV result detected: {result['transaction_hash']}", args.log)
+                tx_hash = result.get('transaction_hash', 'No TX')
+                log_output(f"\n🆕 New MEV result detected: {tx_hash}", args.log)
                 
                 # Parse timestamp and calculate age
                 timestamp_str = result.get('timestamp', '')

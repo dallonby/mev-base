@@ -35,6 +35,8 @@ pub struct OptimizeOutput {
     pub gas_used: u64,
     /// Updated filtered gas value (IIR filtered)
     pub filtered_gas: Option<u64>,
+    /// Actual multiplier used for bounds (after adjustments and clamping)
+    pub actual_multiplier: Option<u64>,
 }
 
 /// Gradient descent optimizer ported from Solidity
@@ -69,6 +71,7 @@ impl GradientOptimizer {
             calldata_used: params.calldata_template.clone(),
             gas_used: 0,
             filtered_gas: None,
+            actual_multiplier: None,
         };
         
         let mut iterations_used = 0;
@@ -397,6 +400,7 @@ impl GradientOptimizer {
                                         calldata_used: calldata.into(),
                                         gas_used,
                                         filtered_gas: None,
+                                        actual_multiplier: None,
                                     });
                                 }
                             }
@@ -408,6 +412,7 @@ impl GradientOptimizer {
                                     calldata_used: calldata.into(),
                                     gas_used,
                                     filtered_gas: None,
+                                    actual_multiplier: None,
                                 });
                             }
                         }
@@ -455,6 +460,7 @@ impl GradientOptimizer {
                             calldata_used: calldata.into(),
                             gas_used,
                             filtered_gas: None,
+                            actual_multiplier: None,
                         })
                     }
                     ExecutionResult::Revert { output, gas_used: revert_gas_used } => {
@@ -500,6 +506,7 @@ impl GradientOptimizer {
                             calldata_used: calldata.into(),
                             gas_used: revert_gas_used,
                             filtered_gas: None,
+                            actual_multiplier: None,
                         })
                     }
                     ExecutionResult::Halt { reason, .. } => {
@@ -510,6 +517,7 @@ impl GradientOptimizer {
                             calldata_used: calldata.into(),
                             gas_used,
                             filtered_gas: None,
+                            actual_multiplier: None,
                         })
                     }
                 }
@@ -537,6 +545,7 @@ impl GradientOptimizer {
                     calldata_used: calldata.into(),
                     gas_used: 0,
                     filtered_gas: None,
+                    actual_multiplier: None,
                 })
             }
         }

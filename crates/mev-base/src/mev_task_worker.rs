@@ -365,12 +365,13 @@ impl MevTaskWorker {
                             timing.gradient_completed = Some(std::time::Instant::now());
                         }
                         
-                        // Save updated filtered gas to Redis if available
+                        // Save updated filtered gas and multiplier to Redis if available
                         if let Some(new_filtered_gas) = result.filtered_gas {
                             let gas_store = self.gas_history_store.clone();
                             let target = config.contract_address;
+                            let multiplier = result.actual_multiplier;
                             tokio::spawn(async move {
-                                gas_store.set_filtered_gas(&target, new_filtered_gas).await;
+                                gas_store.set_filtered_gas_and_multiplier(&target, new_filtered_gas, multiplier).await;
                             });
                         }
                         

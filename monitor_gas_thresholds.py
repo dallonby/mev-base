@@ -111,8 +111,8 @@ def monitor_gas_thresholds(continuous=False):
                 print(f"\n{YELLOW}No gas history data found in Redis{RESET}")
                 print("\nGas history will be populated after the first optimization run.")
             else:
-                print(f"\n{BOLD}{'Address':<44} {'Contract':<20} {'Gas Used':<12} {'TTL':<8} {'Multiplier':<12} {'Status':<30}{RESET}")
-                print("-" * 110)
+                print(f"\n{BOLD}{'Address':<44} {'Contract':<20} {'Gas Used':<12} {'TTL':<8} {'Multiplier':<12} {'Next Adjust':<12} {'Status':<30}{RESET}")
+                print("-" * 120)
                 
                 # Sort keys for consistent display
                 keys.sort()
@@ -130,7 +130,19 @@ def monitor_gas_thresholds(continuous=False):
                     
                     if gas_str:
                         try:
-                            gas_value = int(gas_str)
+                            # Try to parse as JSON first
+                            actual_multiplier = None
+                            if gas_str.startswith('{'):
+                                try:
+                                    import json
+                                    data = json.loads(gas_str)
+                                    gas_value = int(data.get('gas', 0))
+                                    actual_multiplier = data.get('multiplier')
+                                except:
+                                    gas_value = int(gas_str)
+                            else:
+                                gas_value = int(gas_str)
+                            
                             total_gas += gas_value
                             count += 1
                             
@@ -152,7 +164,7 @@ def monitor_gas_thresholds(continuous=False):
                             else:
                                 ttl_str = "Expired"
                             
-                            # Format multiplier with color
+                            # Format adjustment factor with color
                             if adjustment == 1.0:
                                 mult_color = RESET
                             elif adjustment > 1.0:
@@ -162,7 +174,21 @@ def monitor_gas_thresholds(continuous=False):
                             
                             mult_str = f"{adjustment:.1f}x"
                             
-                            print(f"{address:<44} {contract_name:<20} {gas_color}{gas_formatted:<12}{RESET} {ttl_str:<8} {mult_color}{mult_str:<12}{RESET} {status}")
+                            # Format actual multiplier
+                            if actual_multiplier:
+                                mult_display = f"{actual_multiplier}x"
+                                # Color based on value
+                                if actual_multiplier <= 10:
+                                    mult_display_color = RED  # At minimum
+                                elif actual_multiplier >= 900:
+                                    mult_display_color = GREEN  # Near maximum
+                                else:
+                                    mult_display_color = RESET
+                            else:
+                                mult_display = "?"
+                                mult_display_color = RESET
+                            
+                            print(f"{address:<44} {contract_name:<20} {gas_color}{gas_formatted:<12}{RESET} {ttl_str:<8} {mult_display_color}{mult_display:<12}{RESET} {mult_color}{mult_str:<12}{RESET} {status}")
                             
                             # Add note about actual bounds calculation
                             if address in ["0x940181a94A35A4569E4529A3CDfB74e38FD98631", "0xd0b53D9277642d899DF5C87A3966A349A798F224"]:
@@ -175,12 +201,16 @@ def monitor_gas_thresholds(continuous=False):
                 if count > 0:
                     avg_gas = total_gas / count
                     avg_color = get_gas_color(avg_gas)
-                    print("-" * 110)
+                    print("-" * 120)
                     print(f"{BOLD}Average Gas Usage:{RESET} {avg_color}{format_gas(avg_gas)}{RESET}")
                     print(f"\n{BOLD}How bounds work:{RESET}")
                     print("  1. Initial bounds: lower = default_value/5, upper = default_value*1000")
-                    print("  2. Upper bound is adjusted by multiplier (0.5x to 1.5x) based on gas usage")
-                    print("  3. Example: default_value=400 → bounds 80-400,000 → with 0.8x → 80-320,000")
+                    print("  2. Upper bound is adjusted by factor shown in 'Next Adjust' column (0.5x to 1.5x)")
+                    print("  3. Actual multiplier is clamped between 10x and 1000x")
+                    print("  4. Example: If already at 10x min with 0.8x adjustment → stays at 10x")
+                    print(f"\n{BOLD}Columns:{RESET}")
+                    print("  - Multiplier: Actual current multiplier being used (10x = red/minimum, 900x+ = green/near max)")
+                    print("  - Next Adjust: Adjustment factor that will be applied in the next run")
             
             # Show example Redis commands
             print(f"\n{BOLD}Useful Redis Commands:{RESET}")

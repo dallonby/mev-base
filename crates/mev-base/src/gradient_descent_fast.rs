@@ -50,6 +50,7 @@ impl FastGradientOptimizer {
             calldata_used: params.calldata_template.clone(),
             gas_used: 0,
             filtered_gas: None,
+            actual_multiplier: None,
         };
         
         let mut iterations_used = 0;
@@ -339,6 +340,7 @@ impl FastGradientOptimizer {
                             calldata_used: calldata.into(),
                             gas_used,
                             filtered_gas: None,
+                            actual_multiplier: None,
                         })
                     }
                     _ => Ok(OptimizeOutput {
@@ -346,7 +348,8 @@ impl FastGradientOptimizer {
                         delta: 0,
                         calldata_used: calldata.into(),
                         gas_used: exec_result.result.gas_used(),
-                    filtered_gas: None,
+                        filtered_gas: None,
+                        actual_multiplier: None,
                     })
                 }
             }
@@ -355,7 +358,8 @@ impl FastGradientOptimizer {
                 delta: 0,
                 calldata_used: calldata.into(),
                 gas_used: 0,
-            filtered_gas: None,
+                filtered_gas: None,
+                actual_multiplier: None,
             })
         }
     }

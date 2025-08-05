@@ -91,8 +91,8 @@ impl BinarySearchGradientOptimizer {
         }
     }
     
-    /// Adjust bounds based on filtered gas usage
-    fn adjust_bounds_for_gas(&self, mut params: GradientParams) -> GradientParams {
+    /// Adjust bounds based on filtered gas usage, returns (params, actual_multiplier)
+    fn adjust_bounds_for_gas(&self, mut params: GradientParams) -> (GradientParams, u64) {
         // Target gas scales with iteration count
         // Base: 35M for 40 iterations = 875k per iteration
         let target_gas_per_iteration = 875_000u64;
@@ -127,9 +127,15 @@ impl BinarySearchGradientOptimizer {
                 );
                 params.upper_bound = new_upper;
             }
+        } else {
+            // No gas history, use initial multiplier
+            let initial_multiplier = params.upper_bound / params.initial_qty;
+            return (params, initial_multiplier.to::<u64>());
         }
         
-        params
+        // Return the actual multiplier being used
+        let final_multiplier = params.upper_bound / params.initial_qty;
+        (params, final_multiplier.to::<u64>())
     }
 
     /// Optimize quantity using in-contract binary search
@@ -145,7 +151,7 @@ impl BinarySearchGradientOptimizer {
         <DB as revm::DatabaseRef>::Error: Send + Sync + 'static,
     {
         // Adjust bounds based on filtered gas history
-        let params = self.adjust_bounds_for_gas(params);
+        let (params, actual_multiplier) = self.adjust_bounds_for_gas(params);
         let start_time = std::time::Instant::now();
         
         debug!(
@@ -329,6 +335,7 @@ impl BinarySearchGradientOptimizer {
                                     calldata_used: calldata.into(),
                                     gas_used: 200_000, // Estimate for actual swap
                                     filtered_gas: Some(new_filtered_gas),
+                                    actual_multiplier: Some(actual_multiplier),
                                 }
                             }
                             _ => {
@@ -339,6 +346,7 @@ impl BinarySearchGradientOptimizer {
                                     calldata_used: params.calldata_template.clone(),
                                     gas_used: 0,
                                     filtered_gas: params.filtered_gas,
+                                    actual_multiplier: Some(actual_multiplier),
                                 }
                             }
                         };
@@ -358,6 +366,7 @@ impl BinarySearchGradientOptimizer {
                             calldata_used: params.calldata_template.clone(),
                             gas_used: 0,
                             filtered_gas: params.filtered_gas,
+                            actual_multiplier: Some(actual_multiplier),
                         })
                     }
                     ExecutionResult::Halt { reason, gas_used } => {
@@ -372,6 +381,7 @@ impl BinarySearchGradientOptimizer {
                             calldata_used: params.calldata_template.clone(),
                             gas_used: 0,
                             filtered_gas: params.filtered_gas,
+                            actual_multiplier: Some(actual_multiplier),
                         })
                     }
                 }
@@ -388,6 +398,7 @@ impl BinarySearchGradientOptimizer {
                     calldata_used: params.calldata_template.clone(),
                     gas_used: 0,
                     filtered_gas: params.filtered_gas,
+                    actual_multiplier: Some(actual_multiplier),
                 })
             }
         }
