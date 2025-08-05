@@ -111,7 +111,7 @@ def monitor_gas_thresholds(continuous=False):
                 print(f"\n{YELLOW}No gas history data found in Redis{RESET}")
                 print("\nGas history will be populated after the first optimization run.")
             else:
-                print(f"\n{BOLD}{'Address':<44} {'Contract':<20} {'Gas Used':<12} {'TTL':<8} {'Multiplier':<12} {'Next Adjust':<12} {'Status':<30}{RESET}")
+                print(f"\n{BOLD}{'Address':<44} {'Contract':<20} {'Gas Used':<12} {'TTL':<8} {'Current Mult':<12} {'Next Adjust':<12} {'Status':<30}{RESET}")
                 print("-" * 120)
                 
                 # Sort keys for consistent display
@@ -203,14 +203,17 @@ def monitor_gas_thresholds(continuous=False):
                     avg_color = get_gas_color(avg_gas)
                     print("-" * 120)
                     print(f"{BOLD}Average Gas Usage:{RESET} {avg_color}{format_gas(avg_gas)}{RESET}")
-                    print(f"\n{BOLD}How bounds work:{RESET}")
-                    print("  1. Initial bounds: lower = default_value/5, upper = default_value*1000")
-                    print("  2. Upper bound is adjusted by factor shown in 'Next Adjust' column (0.5x to 1.5x)")
-                    print("  3. Actual multiplier is clamped between 10x and 1000x")
-                    print("  4. Example: If already at 10x min with 0.8x adjustment → stays at 10x")
+                    print(f"\n{BOLD}How adaptive gas management works:{RESET}")
+                    print("  1. Initial bounds: lower = default_value/5, upper = default_value*stored_multiplier (or 1000x if no history)")
+                    print("  2. After each run, multiplier is adjusted by factor shown in 'Next Adjust' column")
+                    print("  3. Multiplier is clamped between 10x and 1000x")
+                    print("  4. If at bounds (10x or 1000x), adjustments have no effect")
                     print(f"\n{BOLD}Columns:{RESET}")
-                    print("  - Multiplier: Actual current multiplier being used (10x = red/minimum, 900x+ = green/near max)")
-                    print("  - Next Adjust: Adjustment factor that will be applied in the next run")
+                    print("  - Current Mult: Multiplier loaded from previous run (10x = red/minimum, 900x+ = green/near max)")
+                    print("  - Next Adjust: Factor to apply after current run (0.5x, 0.8x, 1.0x, or 1.5x based on gas usage)")
+                    print(f"\n{BOLD}Common issues:{RESET}")
+                    print("  - Stuck at 1000x: Code was not loading stored multipliers (fixed in latest update)")
+                    print("  - Stuck at 10x: Contract uses too much gas, system can't reduce further")
             
             # Show example Redis commands
             print(f"\n{BOLD}Useful Redis Commands:{RESET}")
