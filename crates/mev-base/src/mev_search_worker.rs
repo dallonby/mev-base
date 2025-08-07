@@ -41,6 +41,8 @@ pub struct MevOpportunity {
     pub last_flashblock_tx_hash: Option<alloy_primitives::B256>,
     /// Scan ID to track this opportunity back to the trigger
     pub scan_id: String,
+    /// The processor config that generated this opportunity
+    pub processor_config: Option<crate::backrun_analyzer::TokenPairProcessorConfig>,
 }
 
 /// Work-stealing MEV search system optimized for high core counts

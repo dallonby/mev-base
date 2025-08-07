@@ -1,3 +1,5 @@
+mandatory: must use Serena for any file operations if it all possible
+
 ## Cargo Commands
 
 - NEVER USE `2>&1` in command line for cargo

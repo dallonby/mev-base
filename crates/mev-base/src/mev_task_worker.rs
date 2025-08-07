@@ -524,10 +524,11 @@ impl MevTaskWorker {
                                 flashblock_index: self.state_snapshot.flashblock_index,
                                 bundle,
                                 expected_profit: alloy_primitives::U256::from(result.delta as u128),
-                                strategy: format!("Backrun_{}", config_name),
+                                strategy: format!("Backrun_{}", config.name),
                                 simulated_gas_used: Some(gas_used),
                                 last_flashblock_tx_hash: last_tx_hash,
                                 scan_id: self.state_snapshot.scan_id.clone(),
+                                processor_config: Some(config.clone()),
                             }));
                         } else {
                             debug!(

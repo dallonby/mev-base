@@ -189,9 +189,9 @@ impl TransactionService {
         let base_fee = header.base_fee_per_gas().unwrap_or(1_000_000) as u128;
         
         // Dynamic priority fee: allocate 5% of profit to gas fees
-        let priority_fee = if let Some(simulated_gas) = opportunity.simulated_gas_used {
+        let base_priority_fee = if let Some(simulated_gas) = opportunity.simulated_gas_used {
             if simulated_gas > 0 {
-                // 2% of profit allocated to fees, divided by gas used = priority fee per gas
+                // 5% of profit allocated to fees, divided by gas used = priority fee per gas
                 let profit_wei = opportunity.expected_profit.as_limbs()[0] as u128;
                 let fee_budget = profit_wei * 5 / 100; // 5%
                 let priority_per_gas = fee_budget / (simulated_gas as u128);
@@ -211,6 +211,18 @@ impl TransactionService {
             5_000u128 // Fallback to 0.005 gwei if no simulation
         };
         
+        // Apply processor-specific multiplier if available
+        let priority_fee = if let Some(ref config) = opportunity.processor_config {
+            if let Some(multiplier) = config.priority_fee_multiplier {
+                // multiplier is in format: 10000 = 1x, 15000 = 1.5x
+                (base_priority_fee * multiplier as u128) / 10000
+            } else {
+                base_priority_fee
+            }
+        } else {
+            base_priority_fee
+        };
+        
         let multiplier = (self.config.gas_multiplier * 100.0) as u128;
         let max_priority_fee_per_gas = priority_fee;
         let max_fee_per_gas = (base_fee * multiplier / 100) + priority_fee;
@@ -218,12 +230,18 @@ impl TransactionService {
         info!(
             base_fee_wei = base_fee,
             base_fee_gwei = base_fee as f64 / 1e9,
+            base_priority_fee_wei = base_priority_fee,
+            base_priority_fee_gwei = base_priority_fee as f64 / 1e9,
             priority_fee_wei = priority_fee,
             priority_fee_gwei = priority_fee as f64 / 1e9,
-            multiplier = self.config.gas_multiplier,
+            processor_multiplier = opportunity.processor_config.as_ref()
+                .and_then(|c| c.priority_fee_multiplier)
+                .map(|m| format!("{}x", m as f64 / 10000.0))
+                .unwrap_or_else(|| "1x (default)".to_string()),
+            base_multiplier = self.config.gas_multiplier,
             max_fee_per_gas_wei = max_fee_per_gas,
             max_fee_per_gas_gwei = max_fee_per_gas as f64 / 1e9,
-            profit_allocation = "15%",
+            profit_allocation = "5%",
             simulated_gas = ?opportunity.simulated_gas_used,
             expected_profit_wei = %opportunity.expected_profit,
             "Calculated dynamic gas pricing"

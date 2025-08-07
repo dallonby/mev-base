@@ -15,6 +15,7 @@ pub struct TokenPairProcessorConfig {
     pub default_value: U256,
     pub data_format: String, // "short" or "long"
     pub check_balance_of: Option<(Address, Address)>, // (erc20_token, address_to_check)
+    pub priority_fee_multiplier: Option<u32>, // 5-digit multiplier: 10000 = 1x, 10100 = 1.01x, 15000 = 1.5x
 }
 
 /// Backrun analyzer for monitoring token pair processors
@@ -96,6 +97,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x8c54143b62cca30b0718ef8167ad5bc25881e554").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
     */
 
@@ -103,6 +105,201 @@ impl BackrunAnalyzer {
     fn initialize_configs(&mut self) {
         // Port all the configs from processorConfigs.ts
         let configs = vec![
+            TokenPairProcessorConfig {
+                name: "UsdsUsdcWeth".to_string(),
+                tokens: vec![],
+                accounts: vec![
+                    // Convert token addresses
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x820C137fa70C8691f0e44Dc420a5e53c168921Dc").unwrap()),
+                ],
+                // Convert contract address
+                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x0c618269F170F93D41A2daEe520599dc0f04adD4").unwrap()),
+                default_value: U256::from(1000),
+                data_format: "short".to_string(),
+                // check_balance_of: None,
+                check_balance_of: Some((
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
+                    Address::from(BackrunAnalyzer::address_to_bytes("0xd0b53D9277642d899DF5C87A3966A349A798F224").unwrap()), // Address to check balance of
+                )),
+                priority_fee_multiplier: None,
+            },
+            TokenPairProcessorConfig {
+                name: "UsdcUsdsWeth".to_string(),
+                tokens: vec![],
+                accounts: vec![
+                    // Convert token addresses
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x820C137fa70C8691f0e44Dc420a5e53c168921Dc").unwrap()),
+                ],
+                // Convert contract address
+                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0xA12b0c0a82879d8cDCeFA283F1483618F33B5407").unwrap()),
+                default_value: U256::from(1000),
+                data_format: "short".to_string(),
+                // check_balance_of: None,
+                check_balance_of: Some((
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
+                    Address::from(BackrunAnalyzer::address_to_bytes("0xd0b53D9277642d899DF5C87A3966A349A798F224").unwrap()), // Address to check balance of
+                )),
+                priority_fee_multiplier: None,
+            },
+            TokenPairProcessorConfig {
+                name: "UsdcRdacWeth".to_string(),
+                tokens: vec![],
+                accounts: vec![
+                    // Convert token addresses
+                    Address::from(BackrunAnalyzer::address_to_bytes("0xd3f68c6e8aee820569d58adf8d85d94489315192").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()),
+                ],
+                // Convert contract address
+                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0xcFAEa7C9d1e6a81d41f8D027D81DfFB373369E48").unwrap()),
+                default_value: U256::from(600),
+                data_format: "short".to_string(),
+                // check_balance_of: None,
+                check_balance_of: Some((
+                    Address::from(BackrunAnalyzer::address_to_bytes("0xD3F68c6e8AeE820569D58AdF8d85d94489315192").unwrap()), // ERC20 token (USDC)
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x6b385c432844f47f8226DD3CFb3899242015ef37").unwrap()), // Address to check balance of
+                )),
+                priority_fee_multiplier: None,
+            },
+            TokenPairProcessorConfig {
+                name: "UsdcHoaWxch".to_string(),
+                tokens: vec![],
+                accounts: vec![
+                    // Convert token addresses
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x84b0b1ee6eef971105442eb9ab420f3dbb774b46").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x36be1d329444aef5d28df3662ec5b4f965cd93e9").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()),
+                ],
+                // Convert contract address
+                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x153b77468BCE59fF94926D9C2d68A1e5E4E4fc51").unwrap()),
+                default_value: U256::from(400),
+                data_format: "short".to_string(),
+                // check_balance_of: None,
+                check_balance_of: Some((
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x84B0b1EE6eef971105442Eb9Ab420F3DbB774b46").unwrap()), // ERC20 token (USDC)
+                    Address::from(BackrunAnalyzer::address_to_bytes("0xF30574f4e867B9FEE0E3d64b09d9Afd5FF13a021").unwrap()), // Address to check balance of
+                )),
+                priority_fee_multiplier: None,
+            },
+            TokenPairProcessorConfig {
+                name: "UsdcHoaWeth".to_string(),
+                tokens: vec![],
+                accounts: vec![
+                    // Convert token addresses
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x84b0b1ee6eef971105442eb9ab420f3dbb774b46").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()),
+                ],
+                // Convert contract address
+                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0xb87cA82977180a5f359cAF4CA7EDB5e5755366e2").unwrap()),
+                default_value: U256::from(250),
+                data_format: "short".to_string(),
+                // check_balance_of: None,
+                check_balance_of: Some((
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x84B0b1EE6eef971105442Eb9Ab420F3DbB774b46").unwrap()), // ERC20 token (USDC)
+                    Address::from(BackrunAnalyzer::address_to_bytes("0xF30574f4e867B9FEE0E3d64b09d9Afd5FF13a021").unwrap()), // Address to check balance of
+                )),
+                priority_fee_multiplier: None,
+            },
+            TokenPairProcessorConfig {
+                name: "UsdcIcnt".to_string(),
+                tokens: vec![],
+                accounts: vec![
+                    // Convert token addresses
+                    Address::from(BackrunAnalyzer::address_to_bytes("0xe0cd4cacddcbf4f36e845407ce53e87717b6601d").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()),
+                ],
+                // Convert contract address
+                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x5Bb80A08A418E2aaDbCFee392f27FC5387c21DC6").unwrap()),
+                default_value: U256::from(2500),
+                data_format: "short".to_string(),
+                // check_balance_of: None,
+                check_balance_of: Some((
+                    Address::from(BackrunAnalyzer::address_to_bytes("0xE0Cd4cAcDdcBF4f36e845407CE53E87717b6601d").unwrap()), // ERC20 token (USDC)
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x705b73427BF045e595014661CCC7f1227a175ecd").unwrap()), // Address to check balance of
+                )),
+                priority_fee_multiplier: None,
+            },
+            TokenPairProcessorConfig {
+                name: "UsdcCbxrpWethUsdc".to_string(),
+                tokens: vec![],
+                accounts: vec![
+                    // Convert token addresses
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x41e357ea17eed8e3ee32451f8e5cba824af58dbf").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()),
+                ],
+                // Convert contract address
+                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x3FE9a62E427319ce875B3fF4EC0a0F896F755480").unwrap()),
+                default_value: U256::from(1000),
+                data_format: "short".to_string(),
+                // check_balance_of: None,
+                check_balance_of: Some((
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913").unwrap()), // ERC20 token (USDC)
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x8c54143b62cCa30B0718ef8167Ad5bC25881e554").unwrap()), // Address to check balance of
+                )),
+                priority_fee_multiplier: None,
+            },
+            TokenPairProcessorConfig {
+                name: "UsdcEurcMamoCbbtcWeth".to_string(),
+                tokens: vec![],
+                accounts: vec![
+                    // Convert token addresses
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x7300b37dfdfab110d83290a29dfb31b1740219fe").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()),
+                ],
+                // Convert contract address
+                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x7d98F845E15910B7058FEbf998326624864f6bef").unwrap()),
+                default_value: U256::from(1742),
+                data_format: "short".to_string(),
+                // check_balance_of: None,
+                check_balance_of: Some((
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913").unwrap()), // ERC20 token (USDC)
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x94F64594854DF80d2DaDDb62830aF8e9Ac8654c0").unwrap()), // Address to check balance of
+                )),
+                priority_fee_multiplier: None,
+            },
+            TokenPairProcessorConfig {
+                name: "UsdcCbbtcPromptWeth".to_string(),
+                tokens: vec![],
+                accounts: vec![
+                    // Convert token addresses
+                    Address::from(BackrunAnalyzer::address_to_bytes("0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x30c7235866872213f68cb1f08c37cb9eccb93452").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()),
+                ],
+                // Convert contract address
+                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x4024c2c5e27aD439b581B88A2E9945e2534C45d8").unwrap()),
+                default_value: U256::from(3749),
+                data_format: "short".to_string(),
+                // check_balance_of: None,
+                check_balance_of: Some((
+                    Address::from(BackrunAnalyzer::address_to_bytes("0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf").unwrap()), // ERC20 token (USDC)
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x4ca59b56965385e14B3fd4d48Cd1741dC21E7343").unwrap()), // Address to check balance of
+                )),
+                priority_fee_multiplier: None,
+            },
+            TokenPairProcessorConfig {
+                name: "UsdbcAeroWeth".to_string(),
+                tokens: vec![],
+                accounts: vec![
+                    // Convert token addresses
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x295ed817ac3c8b12f023a61f7a35cb8f917f8ff3").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()),
+                ],
+                // Convert contract address
+                contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x178E4527AFC50A40d4036587B2b1e171780e2E10").unwrap()),
+                default_value: U256::from(723),
+                data_format: "short".to_string(),
+                // check_balance_of: None,
+                check_balance_of: Some((
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x4C36388bE6F416A29C8d8Eee81C771cE6bE14B18").unwrap()), // Address to check balance of
+                )),
+                priority_fee_multiplier: None,
+            },
             TokenPairProcessorConfig {
                 name: "IPindexyPfwethWeth".to_string(),
                 tokens: vec![],
@@ -121,6 +318,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x87c0676255bE413399C9a205d9CbeB2A04814CCa").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcMamoCbbtcWeth".to_string(),
@@ -129,6 +327,7 @@ impl BackrunAnalyzer {
                     // Convert token addresses
                     Address::from(BackrunAnalyzer::address_to_bytes("0x7300b37dfdfab110d83290a29dfb31b1740219fe").unwrap()),
                     Address::from(BackrunAnalyzer::address_to_bytes("0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()),
                 ],
                 // Convert contract address
                 contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x897101586785105C0aA9738006eAc64FdC4aC90C").unwrap()),
@@ -139,6 +338,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x7300B37DfdfAb110d83290A29DfB31B1740219fE").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x678F431DA2aBb9B5726bbf5CCDbaEEBB60dA9813").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "AukiAeroWeth".to_string(),
@@ -157,6 +357,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x2Fa9D6085c91151200e61a3e627D35001772C0D1").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "AeroPpaeroPfusdcUsdc".to_string(),
@@ -175,6 +376,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x2aD54e3608F2e630D1A1226E98615FD6EbCbb996").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x025B8dD0C0E7e54A0424c1DcCFC89d6f444724F9").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "KudaiPkuadiPfusdcUsdcWeth".to_string(),
@@ -193,6 +395,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x670e77c361375bE9013869CCC516027CCc90383f").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "WethCbbtcPrompt".to_string(),
@@ -211,6 +414,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0xdF4D571e55eFdc25CDD010dA9Cb35b21064DEd49").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "WethBenjiAero".to_string(),
@@ -229,6 +433,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x16905890A1D02b6F824387419319Bf4188B961b0").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "WethUsdcZora".to_string(),
@@ -246,6 +451,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x1111111111166b7FE7bd91427724B487980aFc69").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0xEdc625B74537eE3a10874f53D170E9c17A906B9c").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "WethTibbirVirtual".to_string(),
@@ -264,6 +470,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x9c087Eb773291e50CF6c6a90ef0F4500e349B903").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "AeroWeth".to_string(),
@@ -281,6 +488,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0xF4DFb8647C3Ef75c5A71b7B0ee9240BdccCe8697").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "AnonPanonPfwethWeth".to_string(),
@@ -300,6 +508,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x1807af3897aA6419E770D4642dF7B8b06E542C02").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "MigglesPmigglesPeasUsdc".to_string(),
@@ -319,6 +528,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0xC16F5d5C0a2C0784EfaFEDf28B934a9F0bA21CD7").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "WethPfwethPtybgpTybg".to_string(),
@@ -338,6 +548,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x8d628d22d298b4a6E3DC9171d4b7aa5229e2353c").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcPzfiZfiWeth".to_string(),
@@ -347,6 +558,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0xfe9a0da6dbe7b3167a5908e7e032c4fd7fc51194").unwrap()),
                     Address::from(BackrunAnalyzer::address_to_bytes("0x196bb23d5d05f3b8d28921833a2d3d7feb7d6aaf").unwrap()),
                     Address::from(BackrunAnalyzer::address_to_bytes("0xd080ed3c74a20250a2c9821885203034acd2d5ae").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()),
                 ],
                 // Convert contract address
                 contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0xDf0F538cD6472fb82f5db3e980901C379e9633a4").unwrap()),
@@ -357,6 +569,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0xeF32a6e5B1D363deD63e35af03fc53A637926DE0").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "WethRwaxPearwaxUsdc".to_string(),
@@ -375,6 +588,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0xd448670823ff9667848C821BeE829c642F67E064").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "WethFuegoPfuegoPeasUsdc".to_string(),
@@ -394,6 +608,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x2bbFb5A2496f405d4094D4b854DAeb9CE70D0029").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcAeroWeth".to_string(),
@@ -401,6 +616,7 @@ impl BackrunAnalyzer {
                 accounts: vec![
                     // Convert token addresses
                     Address::from(BackrunAnalyzer::address_to_bytes("0x940181a94a35a4569e4529a3cdfb74e38fd98631").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()),
                 ],
                 // Convert contract address
                 contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x0E95FB13f090B309d822C1074b95D749b42e6aFe").unwrap()),
@@ -411,6 +627,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x20CB8f872ae894F7c9e32e621C186e5AFCe82Fd0").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcPwbltPeas".to_string(),
@@ -419,6 +636,7 @@ impl BackrunAnalyzer {
                     // Convert token addresses
                     Address::from(BackrunAnalyzer::address_to_bytes("0x3dd79d6bd927615787cc95f2c7a77c9ac1af26f4").unwrap()),
                     Address::from(BackrunAnalyzer::address_to_bytes("0x02f92800f57bcd74066f5709f1daa1a4302df875").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()),
                 ],
                 // Convert contract address
                 contract_address: Address::from(BackrunAnalyzer::address_to_bytes("0x0802a4408795639F10f829936E0e080F672eb6fE").unwrap()),
@@ -429,6 +647,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x3Dd79d6BD927615787Cc95F2c7A77C9aC1AF26F4").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x9b0025d10E824E7E2b148953009A40B0C0792F30").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcBusdBltFblpFsblpWbltBlt".to_string(),
@@ -450,6 +669,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x3Dd79d6BD927615787Cc95F2c7A77C9aC1AF26F4").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x9b0025d10E824E7E2b148953009A40B0C0792F30").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcPeasPmigglesMigglesWeth".to_string(),
@@ -459,6 +679,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x02f92800f57bcd74066f5709f1daa1a4302df875").unwrap()),
                     Address::from(BackrunAnalyzer::address_to_bytes("0xdbca4ba3cf9126f4eb3ace8679221c7db42d47d9").unwrap()),
                     Address::from(BackrunAnalyzer::address_to_bytes("0xb1a03eda10342529bbf8eb700a06c60441fef25d").unwrap()),
+                    Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()),
                     // Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()),
                 ],
                 // Convert contract address
@@ -470,6 +691,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x02f92800F57BCD74066F5709F1Daa1A4302Df875").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0xb0a65b3A6F9DA0e5EB057e0D5327DEDDbe17309E").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcVirtualTibbirPtibbir".to_string(),
@@ -490,6 +712,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x0c3b466104545efa096b8f944c1e524E1d0D4888").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcBmxPbmxPeas".to_string(),
@@ -510,6 +733,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x548f93779fBC992010C07467cBaf329DD5F059B7").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x2F48C208d7Bd2b4Ff6Da005A9427eF38F035b2d8").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "KudaiPkudaiUsdcWeth".to_string(),
@@ -529,6 +753,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0xaDE5DA9C31b77a2b95c8Dd88676AFFD2c9482139").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcWethTibbirPtibbir".to_string(),
@@ -548,6 +773,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x0f664afFB82f074937D5cFCD61b97F3F32d5dC50").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "ZfiPzfiUsdcWeth".to_string(),
@@ -566,6 +792,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0xeF32a6e5B1D363deD63e35af03fc53A637926DE0").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "WethUsdcUsdbc".to_string(),
@@ -580,6 +807,7 @@ impl BackrunAnalyzer {
                 default_value: U256::from(90),
                 data_format: "short".to_string(),
                 check_balance_of: None,
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "WethAeroSpectre".to_string(),
@@ -594,6 +822,7 @@ impl BackrunAnalyzer {
                 default_value: U256::from(73),
                 data_format: "short".to_string(),
                 check_balance_of: None,
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "WethUsdcAero".to_string(),
@@ -611,6 +840,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0xE5B5f522E98B5a2baAe212d4dA66b865B781DB97").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "WethWgcDegen".to_string(),
@@ -625,6 +855,7 @@ impl BackrunAnalyzer {
                 default_value: U256::from(42),
                 data_format: "short".to_string(),
                 check_balance_of: None,
+                priority_fee_multiplier: None,
             },
             // TokenPairProcessorConfig {
             //     name: "WethUsdcCbxrp".to_string(),
@@ -654,6 +885,7 @@ impl BackrunAnalyzer {
                 default_value: U256::from(162),
                 data_format: "short".to_string(),
                 check_balance_of: None,
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcKtaWeth".to_string(),
@@ -668,7 +900,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x5Ba5ED44D7262C5A0021fd5fba621C9CceA0DdAB").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0xc0634090F2Fe6c6d75e61Be2b949464aBB498973").unwrap()), // Address to check balance of
                 )),
-
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcSpartansWeth".to_string(),
@@ -680,6 +912,7 @@ impl BackrunAnalyzer {
                 default_value: U256::from(94),
                 data_format: "short".to_string(),
                 check_balance_of: None,
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcUsdtWeth".to_string(),
@@ -691,6 +924,7 @@ impl BackrunAnalyzer {
                 default_value: U256::from(597),
                 data_format: "short".to_string(),
                 check_balance_of: None,
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "EurcUsdcWeth".to_string(),
@@ -705,6 +939,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x4200000000000000000000000000000000000006").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x260441e9574c0633c70c5cff3a47d75dc9bc3e22").unwrap()), // Address to check balance of
                 )),
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcXccxWeth".to_string(),
@@ -716,6 +951,7 @@ impl BackrunAnalyzer {
                 default_value: U256::from(634),
                 data_format: "short".to_string(),
                 check_balance_of: None,
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdbcWethUsdc".to_string(),
@@ -730,7 +966,7 @@ impl BackrunAnalyzer {
                     Address::from(BackrunAnalyzer::address_to_bytes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").unwrap()), // ERC20 token (USDC)
                     Address::from(BackrunAnalyzer::address_to_bytes("0x88492051e18a65fe00241a93699a6082ae95c828").unwrap()), // Address to check balance of
                 )),
-
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcPfusdcPbasedpepePepe".to_string(),
@@ -744,6 +980,7 @@ impl BackrunAnalyzer {
                 default_value: U256::from(1019),
                 data_format: "short".to_string(),
                 check_balance_of: None,
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "WethPfwethPbrianBrian".to_string(),
@@ -757,6 +994,7 @@ impl BackrunAnalyzer {
                 default_value: U256::from(277),
                 data_format: "short".to_string(),
                 check_balance_of: None,
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "WethBrianPbrianPfweth".to_string(),
@@ -770,6 +1008,7 @@ impl BackrunAnalyzer {
                 default_value: U256::from(692),
                 data_format: "short".to_string(),
                 check_balance_of: None,
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcPfusdcPusdpPeasUsdcWeth".to_string(),
@@ -783,6 +1022,7 @@ impl BackrunAnalyzer {
                 default_value: U256::from(157),
                 data_format: "short".to_string(),
                 check_balance_of: None,
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "UsdcPfusdcPtibbirTibbirWeth".to_string(),
@@ -796,6 +1036,7 @@ impl BackrunAnalyzer {
                 default_value: U256::from(84),
                 data_format: "short".to_string(),
                 check_balance_of: None,
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "WethPfwethPpeasPeasUsdc".to_string(),
@@ -809,6 +1050,7 @@ impl BackrunAnalyzer {
                 default_value: U256::from(6),
                 data_format: "short".to_string(),
                 check_balance_of: None,
+                priority_fee_multiplier: None,
             },
             TokenPairProcessorConfig {
                 name: "TybgPtybgPfwethWeth".to_string(),
@@ -822,6 +1064,7 @@ impl BackrunAnalyzer {
                 default_value: U256::from(1329),
                 data_format: "short".to_string(),
                 check_balance_of: None,
+                priority_fee_multiplier: None,
             },
         ];
         
