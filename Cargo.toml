@@ -8,7 +8,7 @@ homepage = "https://github.com/dallonby/mev-base"
 repository = "https://github.com/dallonby/mev-base"
 
 [workspace]
-members = [ "crates/mev-base"]
+members = [ "crates/mev-base", "crates/mint-detector"]
 default-members = ["crates/mev-base"]
 resolver = "2"
 
@@ -45,7 +45,9 @@ reth-chain-state = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0"
 reth-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-cli-commands = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
+reth-codecs = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0", features = ["op"] }
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
+reth-db-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
@@ -56,6 +58,7 @@ reth-trie = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-trie-parallel = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-node-core = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
+reth-node-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0", features = [
@@ -149,6 +152,7 @@ op-alloy-rpc-types-engine = { version = "0.18.7", default-features = false }
 op-alloy-rpc-jsonrpsee = { version = "0.18.7", default-features = false }
 op-alloy-network = { version = "0.18.7", default-features = false }
 op-alloy-consensus = { version = "0.18.7", default-features = false }
+op-alloy-provider = { version = "0.18.7", default-features = false }
 op-alloy-flz = { version = "0.13.1", default-features = false }
 
 async-trait = { version = "0.1.83" }

@@ -133,6 +133,19 @@ mandatory: must use Serena for any file operations if it all possible
 - Code is commented out in `sequencer_service.rs` but can be re-enabled if needed
 - Original purpose: Enable distributed MEV bot network to share transactions
 
+### Priority Fee Multiplier System
+- Added per-processor gas price multipliers to allow different MEV strategies to bid more aggressively
+- TokenPairProcessorConfig now includes `priority_fee_multiplier: Option<u32>` field
+  - Format: 10000 = 1x, 15000 = 1.5x, 20000 = 2x
+  - None defaults to 1x multiplier
+- MevOpportunity now carries full processor config (not just strategy name)
+- TransactionService applies multiplier to dynamic priority fee calculation:
+  1. Base priority fee = 5% of expected profit / gas used
+  2. Adjusted priority fee = base * (multiplier / 10000)
+  3. Capped at 1 gwei maximum
+- Enables strategies with higher profit margins to bid more aggressively for block inclusion
+- Example: Set AeroWeth processor to 15000 (1.5x) to bid 50% more for high-value trades
+
 ## Architecture Updates
 
 ### Parallel Backrun Workers

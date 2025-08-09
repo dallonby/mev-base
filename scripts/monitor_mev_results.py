@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Dict, Optional, List, Tuple
 import argparse
 import psycopg2
+import redis
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -24,6 +25,78 @@ MEV_RESULTS_FILE = "/home/ubuntu/Source/reth-mev-standalone/mev_results.jsonl"
 MEV_ANALYSIS_LOG = "/home/ubuntu/Source/reth-mev-standalone/mev_analysis.log"
 RPC_URL = "/tmp/op-reth"
 COFFEE_ADDRESS = "0xc0ffeefeED8B9d271445cf5D1d24d74D2ca4235E"
+
+# Redis connection for dynamic multipliers
+redis_client = None
+
+def init_redis_connection():
+    """Initialize Redis connection for dynamic multipliers."""
+    global redis_client
+    try:
+        redis_host = os.getenv('REDIS_LOCAL_HOST', 'localhost')
+        redis_port = int(os.getenv('REDIS_LOCAL_PORT', '6379'))
+        redis_password = os.getenv('REDIS_LOCAL_PASSWORD', '')
+        
+        redis_client = redis.StrictRedis(
+            host=redis_host,
+            port=redis_port,
+            password=redis_password if redis_password else None,
+            decode_responses=True
+        )
+        # Test connection
+        redis_client.ping()
+        print(f"✅ Connected to Redis at {redis_host}:{redis_port}")
+        return True
+    except Exception as e:
+        print(f"⚠️  Failed to connect to Redis: {e}")
+        print("   Multiplier adjustments will not be applied")
+        redis_client = None
+        return False
+
+def adjust_multiplier(strategy: str, won: bool, same_flashblock: bool = False):
+    """Adjust the multiplier for a strategy based on win/loss."""
+    if not redis_client:
+        return
+    
+    try:
+        key = f"mev:multiplier:{strategy}"
+        
+        # Get current multiplier
+        current = redis_client.get(key)
+        if current:
+            current_multiplier = int(current)
+        else:
+            current_multiplier = 10000  # Default 1x
+        
+        # Calculate new multiplier
+        if won:
+            # We won, slightly decrease multiplier (save on gas)
+            # Multiply by 0.99 (reduce by 1%)
+            new_multiplier = int(current_multiplier * 0.99)
+            adjustment = "decreased by 1%"
+        elif same_flashblock:
+            # Lost in same flashblock - need higher gas price
+            # Multiply by 1.05 (increase by 5%)
+            new_multiplier = int(current_multiplier * 1.05)
+            adjustment = "increased by 5%"
+        else:
+            # Lost to different flashblock - timing issue, not gas price
+            # No change needed
+            return
+        
+        # Apply bounds (0.2x to 10x)
+        new_multiplier = max(2000, min(180000, new_multiplier))
+        
+        # Update in Redis
+        redis_client.set(key, new_multiplier)
+        
+        old_x = current_multiplier / 10000.0
+        new_x = new_multiplier / 10000.0
+        
+        print(f"   📊 Multiplier {adjustment}: {old_x:.2f}x → {new_x:.2f}x for {strategy}")
+        
+    except Exception as e:
+        print(f"   ⚠️  Failed to adjust multiplier: {e}")
 
 def log_output(message: str, log_file: str = MEV_ANALYSIS_LOG):
     """Print to console and append to log file."""
@@ -196,7 +269,7 @@ def run_find_eth_transfer(tx_hash: str) -> Optional[Dict]:
         return winner_info if winner_info else None
         
     except subprocess.TimeoutExpired:
-        print(f"Timeout running find_eth_transfer for block {block_number}")
+        print(f"Timeout running find_eth_transfer for tx {tx_hash}")
         return None
 
 def analyze_failed_transaction(mev_result: Dict) -> Dict:
@@ -287,8 +360,10 @@ def analyze_failed_transaction(mev_result: Dict) -> Dict:
 def format_analysis(analysis: Dict) -> str:
     """Format analysis results for display."""
     lines = []
+    current_time = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
     lines.append(f"\n{'='*80}")
-    lines.append(f"MEV Transaction Analysis - Block {analysis['block']} Flashblock {analysis['flashblock']}")
+    lines.append(f"MEV Transaction Analysis - {current_time}")
+    lines.append(f"Block {analysis['block']} Flashblock {analysis['flashblock']}")
     lines.append(f"{'='*80}")
     lines.append(f"Strategy: {analysis['strategy']}")
     lines.append(f"Expected Profit: {analysis['expected_profit_eth']:.6f} ETH")
@@ -359,6 +434,9 @@ def main():
     parser.add_argument('--log', default=MEV_ANALYSIS_LOG, help='Log file path')
     args = parser.parse_args()
     
+    # Initialize Redis connection for dynamic multipliers
+    init_redis_connection()
+    
     # Add timestamp to log when starting
     start_time = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
     log_output(f"\n{'='*80}", args.log)
@@ -383,6 +461,15 @@ def main():
                         log_output(f"\nAnalyzing: {tx_hash}", args.log)
                         analysis = analyze_failed_transaction(result)
                         log_output(format_analysis(analysis), args.log)
+                        
+                        # Adjust multiplier based on result
+                        strategy = result.get('strategy', '')
+                        if strategy:
+                            if analysis['status'] == 'success':
+                                adjust_multiplier(strategy, won=True)
+                            elif analysis['status'] in ['reverted', 'not_included']:
+                                same_flashblock = analysis.get('same_flashblock', False)
+                                adjust_multiplier(strategy, won=False, same_flashblock=same_flashblock)
                     except json.JSONDecodeError:
                         continue
         except FileNotFoundError:
@@ -431,6 +518,15 @@ def main():
                 # Analyze the transaction
                 analysis = analyze_failed_transaction(result)
                 log_output(format_analysis(analysis), args.log)
+                
+                # Adjust multiplier based on result
+                strategy = result.get('strategy', '')
+                if strategy:
+                    if analysis['status'] == 'success':
+                        adjust_multiplier(strategy, won=True)
+                    elif analysis['status'] in ['reverted', 'not_included']:
+                        same_flashblock = analysis.get('same_flashblock', False)
+                        adjust_multiplier(strategy, won=False, same_flashblock=same_flashblock)
                 
             except (json.JSONDecodeError, ValueError) as e:
                 continue

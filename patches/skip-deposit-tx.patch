@@ -1,0 +1,16 @@
+--- a/crates/storage/codecs/src/alloy/transaction/txtype.rs
++++ b/crates/storage/codecs/src/alloy/transaction/txtype.rs
+@@ -41,7 +41,12 @@ impl Compact for TxType {
+                     match extended_identifier {
+                         EIP4844_TX_TYPE_ID => Self::Eip4844,
+                         EIP7702_TX_TYPE_ID => Self::Eip7702,
+-                        _ => panic!("Unsupported TxType identifier: {extended_identifier}"),
++                        126 => {
++                            // Type 126 (0x7E) is Optimism deposit transaction
++                            // For now, treat it as Legacy to skip it
++                            Self::Legacy
++                        }
++                        _ => panic!("Unsupported TxType identifier: {extended_identifier}"),
+                     }
+                 }
+                 _ => panic!("Unknown identifier for TxType: {identifier}"),

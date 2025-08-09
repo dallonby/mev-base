@@ -6,9 +6,11 @@ use reth_provider::{StateProviderFactory, HeaderProvider};
 use alloy_consensus::BlockHeader;
 use alloy_eips::eip2718::Encodable2718;
 use eyre::Result;
+use redis::aio::ConnectionManager;
+use redis::{AsyncCommands, Client as RedisClient};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use rand::Rng;
 
 use crate::mev_search_worker::MevOpportunity;
@@ -52,6 +54,7 @@ pub struct TransactionService {
     wallet_service: Arc<WalletService>,
     sequencer_service: Arc<SequencerService>,
     wallet_index: Arc<RwLock<usize>>,
+    redis_conn: Arc<RwLock<Option<ConnectionManager>>>,
 }
 
 impl TransactionService {
@@ -60,12 +63,26 @@ impl TransactionService {
         wallet_service: Arc<WalletService>,
         sequencer_service: Arc<SequencerService>,
     ) -> Self {
-        Self {
+        let service = Self {
             config,
             wallet_service,
             sequencer_service,
             wallet_index: Arc::new(RwLock::new(0)),
-        }
+            redis_conn: Arc::new(RwLock::new(None)),
+        };
+        
+        // Initialize Redis connection in the background
+        let redis_conn_clone = service.redis_conn.clone();
+        tokio::spawn(async move {
+            if let Ok(conn) = Self::init_redis_connection().await {
+                *redis_conn_clone.write().await = Some(conn);
+                info!("Redis connection established for dynamic multipliers");
+            } else {
+                warn!("Failed to connect to Redis for dynamic multipliers - using static values");
+            }
+        });
+        
+        service
     }
 
     /// Process an MEV opportunity into a transaction
@@ -211,17 +228,40 @@ impl TransactionService {
             5_000u128 // Fallback to 0.005 gwei if no simulation
         };
         
-        // Apply processor-specific multiplier if available
-        let priority_fee = if let Some(ref config) = opportunity.processor_config {
-            if let Some(multiplier) = config.priority_fee_multiplier {
-                // multiplier is in format: 10000 = 1x, 15000 = 1.5x
-                (base_priority_fee * multiplier as u128) / 10000
-            } else {
-                base_priority_fee
-            }
+        // Apply dynamic multiplier from Redis, fallback to static config
+        let dynamic_multiplier = self.get_dynamic_multiplier(&opportunity.strategy).await;
+        let base_multiplier = if let Some(multiplier) = dynamic_multiplier {
+            multiplier
+        } else if let Some(ref config) = opportunity.processor_config {
+            config.priority_fee_multiplier.unwrap_or(10000)
         } else {
-            base_priority_fee
+            10000 // Default 1x
         };
+        
+        // Calculate profit-based modifier (1x to 10x based on profit)
+        let profit_eth = opportunity.expected_profit.as_limbs()[0] as f64 / 1e18;
+        let profit_modifier = if profit_eth < 0.00001 {
+            10000  // 1.0x for tiny profits (< 0.00001 ETH)
+        } else if profit_eth < 0.0001 {
+            15000  // 1.5x for small profits (< 0.0001 ETH)
+        } else if profit_eth < 0.001 {
+            20000  // 2.0x for medium profits (< 0.001 ETH)
+        } else if profit_eth < 0.01 {
+            30000  // 3.0x for good profits (< 0.01 ETH)
+        } else if profit_eth < 0.1 {
+            50000  // 5.0x for large profits (< 0.1 ETH)
+        } else {
+            100000 // 10.0x for huge profits (>= 0.1 ETH)
+        };
+        
+        // Combine multipliers: base (from Redis/config) × profit modifier
+        let combined_multiplier = (base_multiplier as u128 * profit_modifier as u128) / 10000;
+        
+        // Apply bounds: min 0.2x (2000), max 100x (1000000) 
+        let final_multiplier = combined_multiplier.min(1000000).max(2000);
+        
+        // Calculate final priority fee
+        let priority_fee = (base_priority_fee * final_multiplier) / 10000;
         
         let multiplier = (self.config.gas_multiplier * 100.0) as u128;
         let max_priority_fee_per_gas = priority_fee;
@@ -234,17 +274,17 @@ impl TransactionService {
             base_priority_fee_gwei = base_priority_fee as f64 / 1e9,
             priority_fee_wei = priority_fee,
             priority_fee_gwei = priority_fee as f64 / 1e9,
-            processor_multiplier = opportunity.processor_config.as_ref()
-                .and_then(|c| c.priority_fee_multiplier)
-                .map(|m| format!("{}x", m as f64 / 10000.0))
-                .unwrap_or_else(|| "1x (default)".to_string()),
-            base_multiplier = self.config.gas_multiplier,
+            multiplier_source = if dynamic_multiplier.is_some() { "Redis" } else { "Config" },
+            base_multiplier = format!("{}x", base_multiplier as f64 / 10000.0),
+            profit_modifier = format!("{}x", profit_modifier as f64 / 10000.0),
+            profit_eth = format!("{:.6}", profit_eth),
+            final_multiplier = format!("{}x", final_multiplier as f64 / 10000.0),
             max_fee_per_gas_wei = max_fee_per_gas,
             max_fee_per_gas_gwei = max_fee_per_gas as f64 / 1e9,
             profit_allocation = "5%",
             simulated_gas = ?opportunity.simulated_gas_used,
             expected_profit_wei = %opportunity.expected_profit,
-            "Calculated dynamic gas pricing"
+            "Calculated dynamic gas pricing with profit-based adjustment"
         );
 
         // Build the transaction
@@ -333,6 +373,79 @@ impl TransactionService {
         }
     }
 
+    /// Initialize Redis connection for dynamic multipliers
+    async fn init_redis_connection() -> Result<ConnectionManager> {
+        let redis_host = std::env::var("REDIS_LOCAL_HOST").unwrap_or_else(|_| "localhost".to_string());
+        let redis_port = std::env::var("REDIS_LOCAL_PORT")
+            .unwrap_or_else(|_| "6379".to_string())
+            .parse::<u16>()
+            .unwrap_or(6379);
+        let redis_password = std::env::var("REDIS_LOCAL_PASSWORD").unwrap_or_default();
+        
+        let redis_url = if redis_password.is_empty() {
+            format!("redis://{}:{}/", redis_host, redis_port)
+        } else {
+            format!("redis://:{}@{}:{}/", redis_password, redis_host, redis_port)
+        };
+        
+        let client = RedisClient::open(redis_url)?;
+        let conn = ConnectionManager::new(client).await?;
+        Ok(conn)
+    }
+    
+    /// Get dynamic multiplier from Redis for a strategy
+    async fn get_dynamic_multiplier(&self, strategy_name: &str) -> Option<u32> {
+        let conn_guard = self.redis_conn.read().await;
+        if let Some(conn) = conn_guard.as_ref() {
+            let mut conn = conn.clone();
+            let key = format!("mev:multiplier:{}", strategy_name);
+            
+            match conn.get::<_, Option<u32>>(&key).await {
+                Ok(Some(multiplier)) => {
+                    // Sanity check: ensure multiplier is within reasonable bounds
+                    // Min: 2000 (0.2x), Max: 100000 (10x)
+                    if multiplier >= 2000 && multiplier <= 100000 {
+                        info!(
+                            strategy = strategy_name,
+                            multiplier = multiplier,
+                            multiplier_x = format!("{}x", multiplier as f64 / 10000.0),
+                            "Using dynamic multiplier from Redis"
+                        );
+                        Some(multiplier)
+                    } else {
+                        warn!(
+                            strategy = strategy_name,
+                            invalid_multiplier = multiplier,
+                            "Invalid multiplier in Redis, using default"
+                        );
+                        // Set default in Redis
+                        let _ = conn.set::<_, _, ()>(&key, 10000).await;
+                        Some(10000)
+                    }
+                }
+                Ok(None) => {
+                    // Key doesn't exist, initialize with default
+                    info!(
+                        strategy = strategy_name,
+                        "No multiplier in Redis, initializing with default 1x"
+                    );
+                    let _ = conn.set::<_, _, ()>(&key, 10000).await;
+                    Some(10000)
+                }
+                Err(e) => {
+                    debug!(
+                        strategy = strategy_name,
+                        error = ?e,
+                        "Failed to get multiplier from Redis"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    }
+    
     /// Get the next wallet based on the configured strategy
     async fn get_next_wallet(&self) -> Result<PrivateKeySigner> {
         match self.config.wallet_strategy {

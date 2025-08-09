@@ -1,0 +1,24 @@
+--- a/crates/storage/codecs/src/alloy/transaction/txtype.rs
++++ b/crates/storage/codecs/src/alloy/transaction/txtype.rs
+@@ -3,6 +3,9 @@ use crate::{
+     Compact,
+ };
+ use alloy_consensus::constants::{EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID};
++
++/// Optimism deposit transaction type ID
++const OPTIMISM_DEPOSIT_TX_TYPE_ID: u8 = 126;
+ 
+ /// Transaction Type
+ #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+@@ -41,6 +44,11 @@ impl Compact for TxType {
+                     match extended_identifier {
+                         EIP4844_TX_TYPE_ID => Self::Eip4844,
+                         EIP7702_TX_TYPE_ID => Self::Eip7702,
++                        OPTIMISM_DEPOSIT_TX_TYPE_ID => {
++                            // Optimism deposit transaction (type 126/0x7E)
++                            // For now, skip these by treating as Legacy
++                            Self::Legacy
++                        }
+                         _ => panic!("Unsupported TxType identifier: {extended_identifier}"),
+                     }
+                 }

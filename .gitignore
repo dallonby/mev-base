@@ -251,4 +251,5 @@ docs/_site/
 .cache/
 
 # MEV results log
-mev_results.jsonl
+mev_results.jsonlreth-patched/
+reth-patched/

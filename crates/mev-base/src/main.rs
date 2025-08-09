@@ -40,6 +40,7 @@ mod wallet_service;
 mod sequencer_service;
 mod metrics;
 mod database_service;
+mod arbitrage;
 
 /// Block subscriber ExEx that echoes block numbers
 async fn block_subscriber_exex<Node: FullNodeComponents>(
